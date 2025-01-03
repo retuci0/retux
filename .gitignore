@@ -3,4 +3,4 @@ build/
 *.iso
 .vscode/
 boot/kernel.bin
-random_shit_ill_add_in_a_future_perhaps.c
+shit/

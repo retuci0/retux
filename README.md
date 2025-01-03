@@ -10,9 +10,13 @@ why the fuck not lmao. also i wanted to learn c so fuck yeah. best way to start.
 
 it greets you with a grub menu, where to load the so called kernel, you need to select "Retux Kernel" in the menu with the arrow keys.
 
-after that, all it does (for now) is say "uhhhh hi i guess" and sit there.
+after that, all it does (for now) is say "uhhhh hi i guess" and let you write stuff underneath
 
 i will add commands in the future.
+
+## what does the name mean
+
+it is a combination of the names "linux" and "retucio". also the linux penguin's name is tux, so even better.
 
 ## how do i use it
 
@@ -40,7 +44,7 @@ not my problem lmao. it works on my machine.
 
 ## contributions
 
-if you for some odd reason feel like wasting your time in this, go ahead, i'm awlays open to prs.
+if you for some odd reason feel like wasting your time in this, go ahead, i'm always open to prs.
 
 ## sources i used
 
@@ -48,3 +52,9 @@ if you for some odd reason feel like wasting your time in this, go ahead, i'm aw
 - [this other book too](https://beej.us/guide/bgc/html/split/)
 - [multiboot specification](https://en.wikipedia.org/wiki/Multiboot_specification)
 - [linux kernel coding style](https://www.kernel.org/doc/html/v4.10/process/coding-style.html)
+- [character scancodes in decimal](https://www.lookuptables.com/coding/keyboard-scan-codes)
+
+## todo list
+- actually detect key releases
+- improve backspace handling when at the start of a line
+- commands and actual shit and allat
