@@ -15,6 +15,8 @@ enum vga_color {
 
 uint16_t vga_entry(char c, uint8_t color);
 void write_string(const char *str);
+void update_cursor(size_t offset);
 void write_char(char c);
+void clear_screen(void);
 
 #endif  // VGA_H

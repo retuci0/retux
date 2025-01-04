@@ -11,7 +11,7 @@ void kernel_main(void)
         uint8_t scancode = keyboard_read();
         if (scancode < 0x80) {
             char c = scancode_to_char(scancode);
-            if (c != '?') {
+            if (c != 0) {
                 write_char(c);
             }
         }

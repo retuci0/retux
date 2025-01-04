@@ -18,45 +18,42 @@ uint8_t keyboard_read(void)
  * it detects (or at least, tries to detect) key releases by detecting "break" key codes,
  * which are the "make" (press) codes of a key, plus 0x80. it currently doesn't work tho.
  * it handles backspaces and enter too.
- * '?' acts as a 'unknown' or invisible character, since it won't show up.
- * this includes the '?' produced when pressing SHIFT + '/', so doing this will result in
- * no character showing up.
+ * 0 (not '0') acts as an 'unknown' or invisible character, since rendering it is avoided in write_char() in vga.c
  */
 char scancode_to_char(uint8_t scancode) 
 {
-    if (scancode & 0x80) { // key releases
-        // currently doesn't detect any key releases at all for some reason
+    // this detects (or at least, tries to detect) key releases using break codes (make code + 0x80). currently, the detection isn't functional.
+    if (scancode & 0x80) {
         if (scancode == 0xAA || scancode == 0xB6) {
             shift_pressed = 0;
-            // return '?';
         }
+        return 0;
+    }
+
+    // shift key pressed
+    if (scancode == 0x2A || scancode == 0x36) {  // left or right shift
+        shift_pressed = 1;
+        return 0;
     }
 
     // caps lock
     if (scancode == 0x3A) {
         caps_lock = !caps_lock;
-        return '?';
-    }
-    
-    // shift was pressed
-    if (scancode == 0x2A || scancode == 0x36) {
-        shift_pressed = 1;
-        return '?';
+        return 0;
     }
 
-    switch (scancode) { // this took me a while
+    switch (scancode) {
         case 0x29: return (shift_pressed) ? '~' : '`';
-
         case 0x02: return (shift_pressed) ? '!' : '1';
-        case 0x03: return (shift_pressed) ? '"' : '2';
+        case 0x03: return (shift_pressed) ? '@' : '2';
         case 0x04: return (shift_pressed) ? '#' : '3';
         case 0x05: return (shift_pressed) ? '$' : '4';
         case 0x06: return (shift_pressed) ? '%' : '5';
-        case 0x07: return (shift_pressed) ? '&' : '6';
-        case 0x08: return (shift_pressed) ? '\'' : '7';
-        case 0x09: return (shift_pressed) ? '(' : '8';
-        case 0x0A: return (shift_pressed) ? ')' : '9';
-        case 0x0B: return (shift_pressed) ? '*' : '0';
+        case 0x07: return (shift_pressed) ? '^' : '6';
+        case 0x08: return (shift_pressed) ? '&' : '7';
+        case 0x09: return (shift_pressed) ? '*' : '8';
+        case 0x0A: return (shift_pressed) ? '(' : '9';
+        case 0x0B: return (shift_pressed) ? ')' : '0';
         case 0x0C: return (shift_pressed) ? '_' : '-';
         case 0x0D: return (shift_pressed) ? '+' : '=';
 
@@ -73,7 +70,7 @@ char scancode_to_char(uint8_t scancode)
 
         case 0x1A: return (shift_pressed) ? '{' : '[';
         case 0x1B: return (shift_pressed) ? '}' : ']';
-        case 0x1D: return (shift_pressed) ? '|' : '\\';
+        case 0x2B: return (shift_pressed) ? '|' : '\\';
 
         case 0x1E: return (shift_pressed || caps_lock) ? 'A' : 'a';
         case 0x1F: return (shift_pressed || caps_lock) ? 'S' : 's';
@@ -103,6 +100,6 @@ char scancode_to_char(uint8_t scancode)
         case 0x0E: return '\b'; // backspace
         case 0x39: return ' ';  // space
         case 0x1C: return '\n';  // enter
-        default: return '?';  // unknown key
+        default: return 0;  // unknown key
     }
 }

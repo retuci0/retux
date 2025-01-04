@@ -29,18 +29,16 @@ if you still want to give it a try for some reason, you will need the following 
 - `gcc`: to compile the thing
 - `mtools`: needed by `grub-mkrescue`
 
-after that, give execute permissions to `run.sh`, `build.sh` and `buildiso.sh`
-
-finally, run `run.sh`. a qemu window will open up, greeting you with the kernel.
+then, just run `make run`. a qemu window will open up, greeting you with the kernel.
 
 in short:
 1. `sudo pacman -S --needed qemu gcc grub mtools` (for other distros than arch, use its respective package manager)
-2. `chmod +x run.sh build.sh buildiso.sh`
-3. `./run.sh`
+2. `make run`, or just `make` for building it.
 
 ## it doesn't work!!!!
 
 not my problem lmao. it works on my machine.
+###### note: i pushed a commit that broke it lmao so yes my problem, i fixed it tho
 
 ## contributions
 
@@ -54,7 +52,14 @@ if you for some odd reason feel like wasting your time in this, go ahead, i'm al
 - [linux kernel coding style](https://www.kernel.org/doc/html/v4.10/process/coding-style.html)
 - [character scancodes in decimal](https://www.lookuptables.com/coding/keyboard-scan-codes)
 
+## known issues
+
+- key release detection isn't functional, so pressing shift once will make ALL following key presses uppercase
+- when pressing the backspace key at the beggining of a line, instead of moving the cursor to the latest valid character in the line above, it
+moves it to the far right, acting as if there were a bunch of spaces after the last actual character, hence making writing text more tedious.
+- pressing the ctrl key inserts a reverse slash ('\')
+
 ## todo list
+- arrow keys
 - actually detect key releases
-- improve backspace handling when at the start of a line
 - commands and actual shit and allat
