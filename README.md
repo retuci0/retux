@@ -51,6 +51,7 @@ if you for some odd reason feel like wasting your time in this, go ahead, i'm al
 - [multiboot specification](https://en.wikipedia.org/wiki/Multiboot_specification)
 - [linux kernel coding style](https://www.kernel.org/doc/html/v4.10/process/coding-style.html)
 - [character scancodes in decimal](https://www.lookuptables.com/coding/keyboard-scan-codes)
+- [some code because i am a skid](https://github.com/Arun007coder/SectorOS-Project)
 
 ## known issues
 

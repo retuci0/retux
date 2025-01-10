@@ -7,8 +7,8 @@
 // see: https://en.wikipedia.org/wiki/Multiboot_specification
 __attribute__((section(".multiboot")))
 const uint32_t multiboot_header[] = {
-    0x1BADB002,  // grub magic number
-    0x0,         // flags
+    0x1BADB002,    // grub magic number for multiboot classic (not multiboot 2)
+    0x0,           // flags
     -(0x1BADB002)  // checksum
 };
 

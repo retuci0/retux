@@ -1,8 +1,10 @@
-#include "vga.h"
-#include "io.h"
+#include "drivers/vga.h"
+#include "drivers/io.h"
+#include "panic/panic.h"
 
 volatile uint16_t *vga_buffer = (uint16_t *) VGA_ADDRESS;
 static size_t offset = 0; // cursor pos
+uint8_t color = (COLOR_BLACK << 4) | COLOR_WHITE;
 
 /* store the character and its color in a 16 bit int */
 uint16_t vga_entry(char c, uint8_t color) 
@@ -10,11 +12,15 @@ uint16_t vga_entry(char c, uint8_t color)
     return (uint16_t) c | (uint16_t) color << 8;
 }
 
+/* change the color settings */
+void set_color(int bg, int fg)
+{
+    color = (bg << 4) | fg;
+}
+
 /* write a string to the vga buffer */
 void write_string(const char *str) 
 {
-    uint8_t color = (COLOR_BLACK << 4) | COLOR_WHITE;
-
     for (size_t i = 0; str[i] != '\0'; i++) {
         write_char(str[i]);
     }
@@ -37,15 +43,24 @@ void update_cursor(size_t offset)
 /* write a single character to the vga buffer */
 void write_char(char c) 
 {
-    uint8_t color = (COLOR_BLACK << 4) | COLOR_WHITE;
-
+    // newline
     if (c == '\n') {
         offset += VGA_WIDTH - (offset % VGA_WIDTH);
+
+    // backspace
     } else if (c == '\b') {
         if (offset > 0) {
             offset--;
             vga_buffer[offset] = vga_entry(' ', color);
         }
+
+    // "tab" (totally not 4 spaces) (please don't airstrike me)
+    } else if (c == '\t') {
+        int i;
+        for (i = 0; i < 4; i++) 
+            write_char(' ');
+
+    // regular characters
     } else {
         vga_buffer[offset++] = vga_entry(c, color);
 
@@ -66,4 +81,10 @@ void clear_screen(void)
     }
     offset = 0;
     update_cursor(offset);
+}
+
+/* enter panic mode */
+void panic_mode(void)
+{
+    set_color(COLOR_RED, COLOR_BLACK);
 }
