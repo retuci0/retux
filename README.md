@@ -10,7 +10,7 @@ why the fuck not lmao. also i wanted to learn c so fuck yeah. best way to start.
 
 it greets you with a grub menu, where to load the so called kernel, you need to select "Retux Kernel" in the menu with the arrow keys.
 
-after that, all it does (for now) is say "uhhhh hi i guess" and let you write stuff underneath
+after that, all it does (for now) is greet you and let you write stuff underneath
 
 i will add commands in the future.
 
@@ -55,12 +55,10 @@ if you for some odd reason feel like wasting your time in this, go ahead, i'm al
 
 ## known issues
 
-- key release detection isn't functional, so pressing shift once will make ALL following key presses uppercase
 - when pressing the backspace key at the beggining of a line, instead of moving the cursor to the latest valid character in the line above, it
 moves it to the far right, acting as if there were a bunch of spaces after the last actual character, hence making writing text more tedious.
-- pressing the ctrl key inserts a reverse slash ('\')
 
 ## todo list
 - arrow keys
-- actually detect key releases
-- commands and actual shit and allat
+- commands
+- fs in fat12 because osdev wiki recommends it and there's a lot of tutorials about it because i am an awful programmer

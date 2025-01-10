@@ -4,3 +4,5 @@ build/
 .vscode/
 boot/kernel.bin
 shit/
+retux.zip
+kernel/include/fs/fat.h
