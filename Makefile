@@ -1,46 +1,49 @@
-SRC_DIR = kernel/src
-INCLUDE_DIR = kernel/include
-OUTPUT_DIR = build
-BOOT_DIR = boot
-ISO_DIR = iso
-LINKER_SCRIPT = kernel/linker.ld
+CXX      := x86_64-elf-g++
+LD       := x86_64-elf-ld
+ASM      := nasm
 
-C_SOURCES = $(wildcard $(SRC_DIR)/**/*.c) $(SRC_DIR)/kernel.c
-KERNEL_OBJ = $(patsubst $(SRC_DIR)/%.c, $(OUTPUT_DIR)/%.o, $(C_SOURCES))
+CXXFLAGS := -ffreestanding -fno-exceptions -fno-rtti -mno-red-zone \
+            -mcmodel=large -Wall -Wextra -std=c++17 -Iinclude -MMD -MP -c
+ASFLAGS  := -f elf64
 
-KERNEL_BIN = $(OUTPUT_DIR)/kernel.bin
-ISO_FILE = retux.iso
+SRC      := src
+OUT      := out
 
-CFLAGS = -ffreestanding -m32 -fno-pic -fno-plt -I$(INCLUDE_DIR)
-LDFLAGS = -m elf_i386 -T $(LINKER_SCRIPT)
+CXX_SOURCES := $(shell find $(SRC) -name '*.cpp')
+ASM_SOURCES := $(shell find $(SRC) -name '*.asm')
 
-all: $(ISO_FILE)
+CXX_OBJS := $(CXX_SOURCES:$(SRC)/%.cpp=$(OUT)/%.o)
+ASM_OBJS := $(ASM_SOURCES:$(SRC)/%.asm=$(OUT)/%.o)
+OBJS     := $(CXX_OBJS) $(ASM_OBJS)
+DEPS     := $(CXX_OBJS:.o=.d) $(ASM_OBJS:.o=.d)
 
-$(KERNEL_BIN): $(KERNEL_OBJ)
-	ld $(LDFLAGS) -o $(KERNEL_BIN) $(KERNEL_OBJ)
+all: $(OUT)/kernel.bin
 
-$(OUTPUT_DIR)/%.o: $(SRC_DIR)/%.c
+$(OUT)/%.o: $(SRC)/%.cpp
 	mkdir -p $(dir $@)
-	gcc $(CFLAGS) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $< -o $@
 
-$(BOOT_DIR)/kernel.bin: $(KERNEL_BIN)
-	mkdir -p $(BOOT_DIR)
-	cp $(KERNEL_BIN) $(BOOT_DIR)/kernel.bin
+$(OUT)/%.o: $(SRC)/%.asm
+	mkdir -p $(dir $@)
+	$(ASM) $(ASFLAGS) -MD $(@:.o=.d) $< -o $@
 
-# generate the iso file using grub
-$(ISO_FILE): $(BOOT_DIR)/kernel.bin
-	mkdir -p $(ISO_DIR)/boot/grub
-	cp $(BOOT_DIR)/kernel.bin $(ISO_DIR)/boot/
-	cp boot/grub/grub.cfg $(ISO_DIR)/boot/grub/
-	grub-mkrescue -o $(ISO_FILE) $(ISO_DIR)
+$(OUT)/kernel.bin: $(OBJS) linker.ld
+	$(LD) -n -T linker.ld -o $@ $(OBJS)
 
-# clean binaries
+-include $(DEPS)
+
+$(OUT)/kernel.iso: $(OUT)/kernel.bin grub.cfg
+	mkdir -p isodir/boot/grub
+	cp $(OUT)/kernel.bin isodir/boot/kernel.bin
+	cp grub.cfg isodir/boot/grub/grub.cfg
+	grub-mkrescue -o $(OUT)/kernel.iso isodir 2>/dev/null
+
+iso: $(OUT)/kernel.iso
+
+run: $(OUT)/kernel.iso
+	qemu-system-x86_64 -cdrom $(OUT)/kernel.iso -serial stdio
+
 clean:
-	rm -f $(BOOT_DIR)/kernel.bin
-	rm -rf $(ISO_DIR)
-	rm -rf $(OUTPUT_DIR)
-	rm -f $(ISO_FILE)
+	rm -rf $(OUT) isodir
 
-# run the kernel on a virtual i386 machine with qemu
-run: $(ISO_FILE)
-	qemu-system-i386 -cdrom $(ISO_FILE)
+.PHONY: all iso run clean
