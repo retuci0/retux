@@ -1,5 +1,5 @@
-#include "serial.h"
-#include "vga.h"
+#include "serial.hpp"
+#include "vga.hpp"
 
 
 namespace {
