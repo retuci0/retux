@@ -5,7 +5,7 @@
 #include "vga.hpp"
 
 
-// `isr_stub_table` lives in isr.asm - 32 entry-point addresses, one per CPU exception vector
+// `isr_stub_table` lives in `isr.asm` - 32 entry-point addresses, one per CPU exception vector
 extern "C" u64 isr_stub_table[32];
 
 namespace {
@@ -26,16 +26,16 @@ namespace {
     } __attribute__((packed));
 
     constexpr int IDT_ENTRIES = 256;
-    constexpr u8 INTERRUPT_GATE = 0x8E; // present=1, DPL=0, type=0xE
-    constexpr u16 KERNEL_CODE_SELECTOR = 0x08; // .code_segment in boot.asm's GDT
+    constexpr u8 INTERRUPT_GATE = 0x8E;         // present=1, DPL=0, type=0xE
+    constexpr u16 KERNEL_CODE_SELECTOR = 0x08;  // .code_segment in boot.asm's GDT
 
     GateDescriptor idt_table[IDT_ENTRIES];
     IDTPointer idt_ptr;
 
-    void set_gate(int vector, u64 handler) {
+    void set_gate(int vector, u64 handler, u8 ist = 0) {
         idt_table[vector].offset_low  = handler & 0xFFFF;
         idt_table[vector].selector    = KERNEL_CODE_SELECTOR;
-        idt_table[vector].ist         = 0;
+        idt_table[vector].ist         = ist;
         idt_table[vector].type_attr   = INTERRUPT_GATE;
         idt_table[vector].offset_mid  = (handler >> 16) & 0xFFFF;
         idt_table[vector].offset_high = (handler >> 32) & 0xFFFFFFFF;
@@ -51,8 +51,13 @@ namespace idt {
             set_gate(i, isr_stub_table[i]);
         }
 
+        // #DF (vector 8) gets IST1 - the dedicated double-fault stack set up
+        // by tss::init(). re-calling set_gate for vector 8 overwrites the entry
+        // from the loop above with the same handler but ist=1 instead of 0.
+        set_gate(8, isr_stub_table[8], 1);
+
         // vectors 32-255 stay zeroed since firing one of those now would hit
-        // a non present IDT entry and raise #GP
+        // a non-present IDT entry and raise #GP
 
         idt_ptr.limit = sizeof(idt_table) - 1;
         idt_ptr.base  = reinterpret_cast<u64>(&idt_table);

@@ -42,7 +42,7 @@ start:
     ; set up a custom stack pointer since GRUB does not provide one
     mov esp, stack_top
 
-    ; stash the multiboot info pointer (EBX) into EDI which won't be touchedd by CPUID
+    ; stash the multiboot info pointer (EBX) into EDI which won't be touched by CPUID
     mov edi, ebx
 
     call check_multiboot
@@ -52,8 +52,8 @@ start:
     call set_up_page_tables
     call enable_paging
 
-    lgdt [gdt64.pointer]
-    jmp gdt64.code_segment:long_mode_start
+    lgdt [gdt64_pointer]
+    jmp 0x08:long_mode_start
 
 
 ; --- sanity checks ---
@@ -120,7 +120,7 @@ set_up_page_tables:
     xor ecx, ecx
 .map_pd_entry:
     mov eax, 0x200000        ; 2MB
-    mul ecx                  ; eax = ecx * 2MB 
+    mul ecx                  ; eax = ecx * 2MB
     or eax, 0b10000011       ; present + writable + huge-page bit
     mov [p2_table + ecx * 8], eax
     inc ecx
@@ -159,16 +159,31 @@ boot_error:
     hlt
 
 
-; --- minimal 64-bit GDT ---
+; --- 64-bit GDT ---
+; must be in .data (not .rodata) because tss::init() writes the TSS descriptor
+; into gdt64_tss_slot at runtime
 
-section .rodata
+section .data
+align 8
 gdt64:
-    dq 0                                          ; null descriptor
-.code_segment: equ $ - gdt64
+    dq 0                                          ; 0x00: null descriptor
+.code_segment: equ $ - gdt64                      ; 0x08
     dq (1<<43) | (1<<44) | (1<<47) | (1<<53)      ; executable, code/data, present, long-mode
-.data_segment: equ $ - gdt64
-    dq (1<<41) | (1<<44) | (1<<47)
-.pointer:
+.data_segment: equ $ - gdt64                      ; 0x10
+    dq (1<<41) | (1<<44) | (1<<47)                ; writable, code/data, present
+.tss_segment:  equ $ - gdt64                      ; 0x18
+
+; 16-byte TSS descriptor slot, zero for now, filled by tss::init() at runtime.
+; a 64-bit TSS descriptor is double-width to hold the full 64-bit base address.
+global gdt64_tss_slot
+gdt64_tss_slot:
+    dq 0   ; low  qword
+    dq 0   ; high qword
+
+; gdt64_pointer is global (not a local label) so it can be referenced
+; from .text above without a forward-reference error across sections.
+global gdt64_pointer
+gdt64_pointer:
     dw $ - gdt64 - 1
     dq gdt64
 
@@ -176,8 +191,6 @@ gdt64:
 bits 64
 section .text
 long_mode_start:
-    ; zero the leftover 16-bit segment selectors. They're unused in long
-    ; mode but left in an undefined state by the far jump
     mov ax, gdt64.data_segment
     mov ss, ax
     mov ds, ax
