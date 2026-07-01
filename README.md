@@ -52,7 +52,7 @@ not an OS yet. just a kernel that boots and says hi. in rough order:
 
 - [x] multiboot2 + long mode
 - [ ] real GDT (current one is the bare minimum required to get into long mode, nothing else)
-- [ ] IDT + exception handlers - so a bug is a register dump, not an instant silent reboot
+- [x] IDT + exception handlers - so a bug is a register dump, not an instant silent reboot
 - [ ] PMM - physical memory manager off the bootloader's memory map
 - [ ] VMM - real page-table management, not just the boot-time identity map
 - [ ] heap allocator

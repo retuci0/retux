@@ -166,6 +166,8 @@ gdt64:
     dq 0                                          ; null descriptor
 .code_segment: equ $ - gdt64
     dq (1<<43) | (1<<44) | (1<<47) | (1<<53)      ; executable, code/data, present, long-mode
+.data_segment: equ $ - gdt64
+    dq (1<<41) | (1<<44) | (1<<47)
 .pointer:
     dw $ - gdt64 - 1
     dq gdt64
@@ -176,7 +178,7 @@ section .text
 long_mode_start:
     ; zero the leftover 16-bit segment selectors. They're unused in long
     ; mode but left in an undefined state by the far jump
-    mov ax, 0
+    mov ax, gdt64.data_segment
     mov ss, ax
     mov ds, ax
     mov es, ax
