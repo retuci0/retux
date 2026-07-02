@@ -25,7 +25,7 @@ namespace {
     u64 used_frames  = 0;
 
 
-    // ---- bit manipulation helpers ----------------------------------------
+    // --- bit manipulation helpers ---
 
     inline void set_used(u64 frame) {
         bitmap[frame / 8] |=  (1 << (frame % 8));
@@ -40,7 +40,7 @@ namespace {
     }
 
 
-    // ---- range helpers --------------------------------------------------
+    // --- range helpers ---
 
     // mark every frame in [base, base+length) as free.
     // rounds base UP and (base+length) DOWN to page boundaries so we never

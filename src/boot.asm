@@ -141,7 +141,7 @@ enable_paging:
     ; set the long mode enable bit in the EFER MSR.
     mov ecx, 0xC0000080
     rdmsr
-    or eax, 1 << 8
+    or eax, (1 << 8) | (1 << 11)  ; LME + NXE
     wrmsr
 
     ; set CR0.PG, this actually switches paging on.
