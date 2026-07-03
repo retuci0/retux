@@ -48,19 +48,9 @@ text on the QEMU screen and a line in your terminal, it worked.
 
 ## status / roadmap
 
-not an OS yet. just a kernel that boots and says hi. in rough order:
+not an OS yet. just a kernel that boots and says hi.
 
-- [x] multiboot2 + long mode
-- [x] real GDT (current one is the bare minimum required to get into long mode, nothing else)
-- [x] IDT + exception handlers - so a bug is a register dump, not an instant silent reboot
-- [x] PMM - physical memory manager off the bootloader's memory map
-- [x] VMM - real page-table management, not just the boot-time identity map
-- [ ] heap allocator
-- [ ] PIC/APIC remap + timer
-- [ ] preemptive multitasking
-- [ ] syscalls + an ELF loader, so something can actually run in ring 3
-
-no timeline. it gets worked on when it gets worked on.
+see [`TODO.md`](TODO.md)
 
 
 ## thanks
