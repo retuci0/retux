@@ -1,17 +1,18 @@
-#include "heap.hpp"
+#include "memory/heap.hpp"
 
-#include "pmm.hpp"
-#include "vmm.hpp"
+#include "memory/pmm.hpp"
+#include "memory/vmm.hpp"
 
-#include "serial.hpp"
-#include "types.hpp"
+#include "lib/types.hpp"
+
+#include "io/serial.hpp"
 
 #include <stddef.h>
 
 
 namespace {
 
-    // ---- heap virtual address range ----
+    // --- heap virtual address range ---
     constexpr u64 HEAP_START = 0xFFFF800000000000ULL;
     constexpr u64 HEAP_MAX   = 0xFFFF8000FFFFFFFFULL;   // 4 GiB total
 
@@ -34,7 +35,7 @@ namespace {
 
     // minimum block size: header + next pointer + footer
     // the next pointer is stored at the beginning of the data area
-    constexpr size_t MIN_BLOCK = sizeof(Block) + sizeof(Block*) + sizeof(Footer); 
+    constexpr size_t MIN_BLOCK = sizeof(Block) + sizeof(Block*) + sizeof(Footer);
 
     static_assert(MIN_BLOCK % ALIGNMENT == 0, "MIN_BLOCK not aligned");
 
@@ -254,5 +255,5 @@ namespace heap {
             coalesce(block);
         }
     }
-    
+
 }

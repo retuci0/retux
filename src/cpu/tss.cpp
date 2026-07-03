@@ -1,5 +1,7 @@
-#include "tss.hpp"
-#include "types.hpp"
+#include "cpu/tss.hpp"
+
+#include "lib/types.hpp"
+
 
 // this must match the GDT layout in `boot.asm`:
 //   0x00 = null, 0x08 = code, 0x10 = data, 0x18 = TSS (16-byte descriptor)
@@ -71,7 +73,7 @@ namespace tss {
         tss_.ist[0] = reinterpret_cast<u64>(df_stack + sizeof(df_stack));
 
         // setting iopb past the end of the TSS tells the CPU there is no
-        // I/O permission bitmap - all port I/O from ring 3 will fault (which does 
+        // I/O permission bitmap - all port I/O from ring 3 will fault (which does
         // not exist yet but who cares)
         tss_.iopb = sizeof(TSS64);
 

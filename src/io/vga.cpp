@@ -1,4 +1,4 @@
-#include "vga.hpp"
+#include "io/vga.hpp"
 
 
 void vga::clear() {

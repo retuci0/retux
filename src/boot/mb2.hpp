@@ -1,6 +1,6 @@
 #pragma once
 
-#include "types.hpp"
+#include "lib/types.hpp"
 
 
 // Multiboot2 spec §3.6 - the boot information structure passed in RDI.

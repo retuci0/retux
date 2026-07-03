@@ -1,6 +1,6 @@
 #pragma once
 
-#include "types.hpp"
+#include "lib/types.hpp"
 
 
 namespace serial {
@@ -14,9 +14,9 @@ namespace serial {
 
     void print(char c);
     void print(const char* str);
-    
+
     inline bool transmit_ready() {
-        return inb(port + 5) & 0x20; 
+        return inb(port + 5) & 0x20;
     }
 
 }

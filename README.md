@@ -59,3 +59,8 @@ see [`TODO.md`](TODO.md)
 - whoever wrote the Multiboot2 spec, for letting me skip writing a bootloader
 
 > as always, PRs are always welcome. if you contribute, you will be added to the credits! (I'm sure y'all don't care but whatever)
+
+
+## license
+
+see [`LICENSE.md`](LICENSE.md)

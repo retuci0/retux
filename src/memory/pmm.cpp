@@ -1,9 +1,11 @@
-#include "pmm.hpp"
-#include "mb2.hpp"
-#include "hex.hpp"
-#include "serial.hpp"
+#include "memory/pmm.hpp"
 
-#include "types.hpp"
+#include "lib/hex.hpp"
+#include "lib/types.hpp"
+
+#include "boot/mb2.hpp"
+#include "io/serial.hpp"
+
 
 
 namespace {

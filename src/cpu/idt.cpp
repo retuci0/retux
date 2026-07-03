@@ -1,8 +1,10 @@
-#include "idt.hpp"
-#include "hex.hpp"
-#include "serial.hpp"
-#include "types.hpp"
-#include "vga.hpp"
+#include "cpu/idt.hpp"
+
+#include "lib/hex.hpp"
+#include "lib/types.hpp"
+
+#include "io/serial.hpp"
+#include "io/vga.hpp"
 
 
 // `isr_stub_table` lives in `isr.asm` - 32 entry-point addresses, one per CPU exception vector

@@ -3,7 +3,7 @@ LD       := x86_64-elf-ld
 ASM      := nasm
 
 CXXFLAGS := -ffreestanding -fno-exceptions -fno-rtti -mno-red-zone \
-            -mcmodel=large -Wall -Wextra -std=c++17 -Iinclude -MMD -MP -c
+            -mcmodel=large -Wall -Wextra -std=c++17 -MMD -MP -c -Isrc
 ASFLAGS  := -f elf64
 
 SRC      := src

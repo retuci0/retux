@@ -1,7 +1,8 @@
-#include "vmm.hpp"
-#include "pmm.hpp"
+#include "memory/vmm.hpp"
 
-#include "types.hpp"
+#include "memory/pmm.hpp"
+
+#include "lib/types.hpp"
 
 
 // all section boundary symbols are defined in `linker.ld`.
@@ -23,7 +24,7 @@ namespace {
     }
 
     // read CR3 and return a pointer to the live PML4 table.
-    // works because virtual == physical for everything in 
+    // works because virtual == physical for everything in
     // the kernel's address range, so we can use the
     // raw physical address directly as a pointer.
     inline u64* get_pml4() {
@@ -49,8 +50,8 @@ namespace {
 
     // split the 2MB huge page at pd[pd_idx] into 512 individual 4KB PT
     // entries covering exactly the same physical range.
-    // 
-    // the boot map sets all huge pages present+writable with no NX 
+    //
+    // the boot map sets all huge pages present+writable with no NX
     // we carry those flags through so nothing breaks until the caller
     // explicitly remaps individual pages with stricter permissions.
     void split_huge_page(u64* pd, u64 pd_idx) {

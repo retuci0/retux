@@ -1,6 +1,6 @@
 #pragma once
 
-#include "types.hpp"
+#include "lib/types.hpp"
 
 
 // 0xB8000 is the fixed physical address of the VGA text buffer on any PC-compatible machine

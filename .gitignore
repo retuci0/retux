@@ -5,3 +5,6 @@ out/
 *.o
 .vscode/
 todo.txt
+.cache/
+
+compile_commands.json
