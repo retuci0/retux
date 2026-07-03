@@ -12,6 +12,7 @@
 // `extern "C"` disables C++ name mangling
 extern "C" void kernel_main(u64 multiboot_info_addr) {
     serial::init();
+    serial::print("\n");
 
     idt::init(); serial::print("initialized IDT!\n");
     tss::init(); serial::print("initialized TSS!\n");

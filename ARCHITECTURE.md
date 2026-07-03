@@ -5,7 +5,7 @@ this document describes the high‑level design, boot sequence, and core subsyst
 ---
 
 
-## 1. boot Process (32‑bit -> 64‑bit)
+## 1. boot process (32‑bit -> 64‑bit)
 
 1. **GRUB2** loads the kernel via Multiboot2 and jumps to the 32‑bit entry point `start` (defined in `boot.asm`).
 2. the boot stub performs sanity checks:
@@ -25,7 +25,7 @@ this document describes the high‑level design, boot sequence, and core subsyst
 ---
 
 
-## 2. memory Management
+## 2. memory management
 
 ### physical memory manager (`pmm`)
 - tracks all physical memory up to 4 GiB using a **bitmap** (128 KiB).
