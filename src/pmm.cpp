@@ -88,23 +88,29 @@ extern "C" char _kernel_end[];
 namespace pmm {
 
     void init(u64 boot_info_addr) {
-        // fill with 0xFF so frames we never see in the memory map stay reserved
+        // fill with 0xFF
         for (u64 i = 0; i < BITMAP_SIZE; ++i) bitmap[i] = 0xFF;
         total_frames = 0;
         used_frames  = 0;
 
-        // find the Multiboot2 memory map tag.
+        char buf[17];
+        serial::print("pmm: boot_info_addr = 0x");
+        hex::to_string(boot_info_addr, buf);
+        serial::print(buf);
+        serial::print("\n");
+
+        // find the memory map tag
         const auto* tag = mb2::find_tag(boot_info_addr, mb2::TAG_MEMMAP);
         if (!tag) {
             serial::print("pmm: no memory map tag — cannot initialise\n");
-            asm volatile("cli; hlt");
+            while (1) asm("cli; hlt");
         }
 
         const auto* mmap = reinterpret_cast<const mb2::MemMapTag*>(tag);
-        const u8*   entry_ptr = reinterpret_cast<const u8*>(mmap + 1);
-        const u8*   mmap_end  = reinterpret_cast<const u8*>(mmap) + mmap->size;
+        const u8* entry_ptr = reinterpret_cast<const u8*>(mmap + 1);
+        const u8* mmap_end  = reinterpret_cast<const u8*>(mmap) + mmap->size;
 
-        // flip those frames from reserved to free in the bitmap for each available region
+        // mark available memory as free
         while (entry_ptr < mmap_end) {
             const auto* entry = reinterpret_cast<const mb2::MemMapEntry*>(entry_ptr);
             if (entry->type == mb2::MEMMAP_AVAIL) {
@@ -113,12 +119,10 @@ namespace pmm {
             entry_ptr += mmap->entry_size;
         }
 
-        // mark the kernel image itself as used.
+        // mark kernel image and first 1MB as used
         u64 ks = reinterpret_cast<u64>(_kernel_start);
         u64 ke = reinterpret_cast<u64>(_kernel_end);
         mark_range_used(ks, ke - ks);
-
-        // mark the first 1MB as reserved regardless of what the mem map says
         mark_range_used(0, 0x100000);
     }
 

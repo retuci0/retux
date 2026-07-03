@@ -31,9 +31,13 @@ section .bss
 align 4096
 p4_table:     resb 4096
 p3_table:     resb 4096
-p2_table:     resb 4096
-stack_bottom: resb 16384  ; 16KB boot stack
+p2_table:     resb 4096      ; for 0-1 GiB
+p2_table2:    resb 4096      ; for 1-2 GiB
+p2_table3:    resb 4096      ; for 2-3 GiB
+p2_table4:    resb 4096      ; for 3-4 GiB
+stack_bottom: resb 16384
 stack_top:
+
 
 ; --- 32-bit code ---
 section .text
@@ -44,6 +48,7 @@ start:
 
     ; stash the multiboot info pointer (EBX) into EDI which won't be touched by CPUID
     mov edi, ebx
+    push edi
 
     call check_multiboot
     call check_cpuid
@@ -53,6 +58,7 @@ start:
     call enable_paging
 
     lgdt [gdt64_pointer]
+    pop edi
     jmp 0x08:long_mode_start
 
 
@@ -109,15 +115,55 @@ check_long_mode:
 ; identity-mapping the first 1GB of physical memory (512 entries * 2MB).
 
 set_up_page_tables:
+    ; PML4 -> PDPT
     mov eax, p3_table
-    or eax, 0b11            ; present + writable
+    or eax, 0b11
     mov [p4_table], eax
 
+    ; fill PDPT entries for 4 PDs
     mov eax, p2_table
-    or eax, 0b11             ; present + writable
+    or eax, 0b11
     mov [p3_table], eax
 
+    mov eax, p2_table2
+    or eax, 0b11
+    mov [p3_table + 8], eax
+
+    mov eax, p2_table3
+    or eax, 0b11
+    mov [p3_table + 16], eax
+
+    mov eax, p2_table4
+    or eax, 0b11
+    mov [p3_table + 24], eax
+
+    ; fill each PD with 512 huge pages
+    mov esi, p2_table          ; first PD
+    mov edi, 0                 ; base physical address (in bytes)
+.fill_all:
+    call .fill_pd
+    add esi, 4096              ; next PD
+    add edi, 0x40000000        ; next 1GiB
+    cmp edi, 0x100000000       ; done at 4GiB
+    jne .fill_all
+    ret
+
+.fill_pd:
+    ; esi = PD address, edi = base physical address
     xor ecx, ecx
+.loop:
+    mov eax, edi
+    mov eax, edi          ; base address
+    mov edx, ecx
+    shl edx, 21           ; ecx * 2,097,152
+    add eax, edx
+    or eax, 0b10000011
+    mov [esi + ecx * 8], eax
+    inc ecx
+    cmp ecx, 512
+    jne .loop
+    ret
+
 .map_pd_entry:
     mov eax, 0x200000        ; 2MB
     mul ecx                  ; eax = ecx * 2MB
