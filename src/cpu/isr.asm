@@ -3,6 +3,7 @@
 ; code or not, then hand off to a single common handler.
 
 extern isr_common_handler
+extern irq_common_handler
 
 bits 64
 section .text
@@ -109,3 +110,81 @@ isr_stub_table:
     dq isr8,  isr9,  isr10, isr11, isr12, isr13, isr14, isr15
     dq isr16, isr17, isr18, isr19, isr20, isr21, isr22, isr23
     dq isr24, isr25, isr26, isr27, isr28, isr29, isr30, isr31
+
+
+; --- hardware IRQ stubs (vectors 32-47), routed here by the I/O APIC ---
+; IRQs never carry a CPU-pushed error code, so these are shaped exactly
+; like ISR_NOERR - just a separate common stub so exceptions and IRQs
+; dispatch through two independent C++-side handler tables.
+
+section .text
+
+%macro IRQ_STUB 1
+global irq%1
+irq%1:
+    push 0
+    push %1
+    jmp irq_common_stub
+%endmacro
+
+IRQ_STUB 32
+IRQ_STUB 33
+IRQ_STUB 34
+IRQ_STUB 35
+IRQ_STUB 36
+IRQ_STUB 37
+IRQ_STUB 38
+IRQ_STUB 39
+IRQ_STUB 40
+IRQ_STUB 41
+IRQ_STUB 42
+IRQ_STUB 43
+IRQ_STUB 44
+IRQ_STUB 45
+IRQ_STUB 46
+IRQ_STUB 47
+
+irq_common_stub:
+    push rax
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
+    push rbp
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+    push r14
+    push r15
+
+    mov rdi, rsp
+    call irq_common_handler
+
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rbp
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+
+    add rsp, 16
+    iretq
+
+section .rodata
+global irq_stub_table
+irq_stub_table:
+    dq irq32, irq33, irq34, irq35, irq36, irq37, irq38, irq39
+    dq irq40, irq41, irq42, irq43, irq44, irq45, irq46, irq47

@@ -15,6 +15,7 @@ this is a hobby OS, but clean, well‑documented code is always welcome.
   - use `u8`, `u16`, `u32`, `u64` from `types.hpp`.
   - keep functions short and well‑commented.
   - prefer `constexpr` over macros where possible.
+  - use absolute path includes from `src` (`"lib/types.hpp"`) rather than relative ones (`"../lib/types.hpp"`).
 - **assembly (NASM)**: Use `section .text`, `.data`, `.bss`. **indent with 4 spaces.**
 
 

@@ -11,7 +11,7 @@
 - [x] heap allocator (`kmalloc`/`kfree` with coalescing)
 
 ## phase 2: drivers & interrupt subsystem
-- [ ] PIC remap (legacy 8259) OR set up APIC (local + I/O). 
+- [x] PIC remap (legacy 8259) OR set up APIC (local + I/O). 
 - [ ] PIT or HPET timer driver (for preemptive multitasking ticks)
 - [ ] PCI bus enum (config space, find devices by class/subclass)
 - [ ] PS/2 Keyboard driver (scancode set 1 -> ASCII translation)

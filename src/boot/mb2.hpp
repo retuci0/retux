@@ -44,6 +44,8 @@ namespace mb2 {
     } __attribute__((packed));
 
     constexpr u32 TAG_MEMMAP    = 6;
+    constexpr u32 TAG_ACPI_OLD  = 14;  // ACPI 1.0 RSDP, copied verbatim after the tag header
+    constexpr u32 TAG_ACPI_NEW  = 15;  // ACPI >= 2.0 RSDP (extended), same idea
     constexpr u32 TAG_END       = 0;
     constexpr u32 MEMMAP_AVAIL  = 1;  // the only type we can give to the PMM
 

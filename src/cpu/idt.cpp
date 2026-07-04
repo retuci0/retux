@@ -54,18 +54,23 @@ namespace idt {
         }
 
         // #DF (vector 8) gets IST1 - the dedicated double-fault stack set up
-        // by tss::init(). re-calling set_gate for vector 8 overwrites the entry
+        // by `tss::init()`. re-calling set_gate for vector 8 overwrites the entry
         // from the loop above with the same handler but ist=1 instead of 0.
         set_gate(8, isr_stub_table[8], 1);
 
-        // vectors 32-255 stay zeroed since firing one of those now would hit
-        // a non-present IDT entry and raise #GP
+        // vectors 32-255 stay zeroed here - irq::init() fills in 32-47 via
+        // `install_gate()` below once the APIC is set up. anything past that
+        // firing now would hit a non-present IDT entry and raise #GP.
 
         idt_ptr.limit = sizeof(idt_table) - 1;
         idt_ptr.base  = reinterpret_cast<u64>(&idt_table);
         asm volatile("lidt %0" : : "m"(idt_ptr));
 
         // deliberately not calling `sti` here
+    }
+
+    void install_gate(u64 vector, u64 handler) {
+        set_gate(static_cast<int>(vector), handler);
     }
 
 }
