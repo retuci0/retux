@@ -184,6 +184,11 @@ enable_paging:
     or eax, 1 << 5
     mov cr4, eax
 
+    ; enable OSFXSR and OSXMMEXCPT in CR4.
+    mov eax, cr4
+    or eax, (1 << 9) | (1 << 10)   ; OSFXSR + OSXMMEXCPT
+    mov cr4, eax
+
     ; set the long mode enable bit in the EFER MSR.
     mov ecx, 0xC0000080
     rdmsr

@@ -2,8 +2,9 @@
 
 
 void vga::clear() {
-    for (int i = 0; i < WIDTH * HEIGHT; ++i)
+    for (int i = 0; i < WIDTH * HEIGHT; ++i) {
         buffer[i] = (static_cast<u16>(COLOR) << 8) | ' ';
+    }
     cursor_row = 0;
     cursor_col = 0;
 }

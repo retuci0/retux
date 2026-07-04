@@ -19,7 +19,7 @@ namespace {
 namespace irq {
 
     void init() {
-        for (int i = 0; i < 16; ++i) {
+        for (u8 i = 0; i < 16; ++i) {
             idt::install_gate(apic::IRQ_BASE + i, irq_stub_table[i]);
         }
     }

@@ -1,14 +1,12 @@
 #pragma once
 
 #include "lib/types.hpp"
+#include "lib/port.hpp"
 
 
 namespace serial {
 
     constexpr u16 port = 0x3F8;  // COM1
-
-    void outb(u16 p, u8 val);
-    u8 inb(u16 p);
 
     void init();
 
@@ -16,7 +14,7 @@ namespace serial {
     void print(const char* str);
 
     inline bool transmit_ready() {
-        return inb(port + 5) & 0x20;
+        return port::inb(port + 5) & 0x20;
     }
 
 }

@@ -13,11 +13,7 @@ namespace {
     constexpr u16 PIT_CHANNEL0 = 0x40;
     constexpr u16 PIT_COMMAND  = 0x43;
 
-    void outb(u16 port, u8 val) {
-        asm volatile("outb %0, %1" : : "a"(val), "Nd"(port));
-    }
-
-    volatile u64 ticks_  = 0;
+    volatile u64 ticks_ = 0;
     u32 configured_hz = 0;
 
     void pit_irq_handler(irq::Frame*) {
@@ -42,9 +38,9 @@ namespace pit {
 
         // channel 0, lobyte/hibyte access mode, mode 3 (square wave
         // generator - the usual choice for a periodic tick), binary mode.
-        outb(PIT_COMMAND, 0x36);
-        outb(PIT_CHANNEL0, static_cast<u8>(divisor & 0xFF));
-        outb(PIT_CHANNEL0, static_cast<u8>((divisor >> 8) & 0xFF));
+        port::outb(PIT_COMMAND, 0x36);
+        port::outb(PIT_CHANNEL0, static_cast<u8>(divisor & 0xFF));
+        port::outb(PIT_CHANNEL0, static_cast<u8>((divisor >> 8) & 0xFF));
 
         irq::register_handler(0, pit_irq_handler);
         apic::set_irq_mask(0, false);

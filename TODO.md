@@ -10,12 +10,12 @@
 - [x] VMM (virtual memory manager: page tables, huge-page splitting, `remap_kernel`)
 - [x] heap allocator (`kmalloc`/`kfree` with coalescing)
 
-## phase 2: drivers & interrupt subsystem
+## ~~phase 2: drivers & interrupt subsystem~~
 - [x] PIC remap (legacy 8259) OR set up APIC (local + I/O). 
-- [ ] PIT or HPET timer driver (for preemptive multitasking ticks)
-- [ ] PCI bus enum (config space, find devices by class/subclass)
-- [ ] PS/2 Keyboard driver (scancode set 1 -> ASCII translation)
-- [ ] basic TTY (scrollback, backspace, basic ANSI colors)
+- [x] PIT or HPET timer driver (for preemptive multitasking ticks)
+- [x] PCI bus enum (config space, find devices by class/subclass)
+- [x] PS/2 Keyboard driver (scancode set 1 -> ASCII translation)
+- [x] basic TTY (scrollback, backspace, basic ANSI colors)
 
 ## phase 3: storage & fs
 - [ ] AHCI Driver (SATA). 
