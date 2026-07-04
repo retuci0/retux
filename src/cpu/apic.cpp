@@ -136,6 +136,8 @@ namespace apic {
         u8 dest_apic_id = static_cast<u8>(lapic_read(LAPIC_REG_ID) >> 24);
 
         for (u8 irq = 0; irq < 16; ++irq) {
+            if (irq == 2) continue;  // IRQ 2 is reserved for the local APIC timer
+
             i32 reg = redir_reg_for_irq(irq);
             if (reg < 0) continue;  // this IRQ's GSI isn't on this I/O APIC
 

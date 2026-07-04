@@ -17,6 +17,11 @@ namespace acpi {
         u32 gsi_base;
     };
 
+    struct HpetInfo {
+        bool present = false;
+        u64  address  = 0;  // MMIO base
+    };
+
     // parse RSDP -> RSDT/XSDT -> MADT. must be called before apic::init_lapic()
     // or apic::init_ioapic(). returns false if no usable ACPI info or no
     // I/O APIC was found (in which case the APIC path can't be used).
@@ -26,6 +31,10 @@ namespace acpi {
 
     int ioapic_count();
     const IoApic& ioapic(int index);
+
+    // present() is false if the machine has no HPET table at all (common on
+    // older/virtualized hardware) - hpet::init() checks this for you.
+    const HpetInfo& hpet();
 
     // resolve a legacy ISA IRQ (0-15, e.g. keyboard = 1, PIT = 0) to the
     // GSI it's actually wired to. usually GSI == IRQ, but interrupt source

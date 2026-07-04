@@ -101,7 +101,6 @@ this document describes the high‑level design, boot sequence, and core subsyst
 - userspace (ring 3) with syscalls
 - ELF loader
 - file system support?
-- fix VGA buffer placement (currently in `.rodata`, should be `.data`)
 
 ---
 
