@@ -100,7 +100,6 @@ this document describes the high‑level design, boot sequence, and core subsyst
 - preemptive multitasking (scheduler)
 - userspace (ring 3) with syscalls
 - ELF loader
-- file system support?
 
 ---
 

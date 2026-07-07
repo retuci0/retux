@@ -2,6 +2,7 @@
 #include "lib/string.hpp"
 #include "io/serial.hpp"
 
+
 namespace partition {
 
     // MBR structs
@@ -17,7 +18,7 @@ namespace partition {
     struct MBR {
         u8 bootcode[446];
         MBRPartition parts[4];
-        u16 signature; // 0xAA55
+        u16 signature;  // 0xAA55
     } __attribute__((packed));
 
     // GPT structs

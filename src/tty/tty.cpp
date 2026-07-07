@@ -81,6 +81,22 @@ namespace tty {
         auto& con = consoles[active_console];
 
         // handle newline
+        if (c == '\b') {
+            if (con.col == 0) {
+                con.row--;
+                if (con.row < 0) con.row = 0;
+                con.col = VGA_WIDTH - 1;
+                return;
+            }
+            con.col--;
+            int pos = con.row * VGA_WIDTH + con.col;
+            u16 blank = (static_cast<u16>(COLOR) << 8) | ' ';
+            con.buffer[pos] = blank;
+            volatile u16* vga = reinterpret_cast<volatile u16*>(VGA_ADDR);
+            vga[pos] = blank;
+            update_cursor();
+            return;
+        }
         if (c == '\n') {
             con.col = 0;
             if (++con.row >= VGA_HEIGHT) {

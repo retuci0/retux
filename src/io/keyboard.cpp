@@ -15,6 +15,8 @@ namespace {
 
     bool alt_pressed = false;
     bool ctrl_pressed = false;
+    bool shift_pressed = false;
+    bool caps_lock = false;
 
     // scancode set 1 -> ASCII (just lowercase for now)
     const char scancode_to_ascii[128] = {
@@ -44,6 +46,16 @@ namespace {
         bool released = scancode & 0x80;
         u8 key = scancode & 0x7F;
 
+        // track shift key (0x2A, 0x36)
+        if (key == 0x2A || key == 0x36) {
+            shift_pressed = !released;
+            return;
+        }
+        // track caps lock (0x3A)
+        if (key == 0x3A) {
+            caps_lock = !caps_lock;
+            return;
+        }
         // track alt key (0x38)
         if (key == 0x38) {
             alt_pressed = !released;
@@ -58,6 +70,16 @@ namespace {
         // if released, ignore
         if (released) return;
 
+        if (key == 0x0E) {
+            push_char('\b');   // TTY will interpret this
+            return;
+        }
+
+        if (key == 0x1C) {
+            push_char('\n');
+            return;
+        }
+
         // alt+F1..F4: switch TTY
         if (alt_pressed) {
             if (key >= 0x3B && key <= 0x3E) {  // F1..F4
@@ -68,9 +90,17 @@ namespace {
         }
 
         char ascii = scancode_to_ascii[key];
-        if (ascii) {
-            push_char(ascii);
+        if (!ascii) return;
+
+        // uppercase handling
+        if (ascii >= 'a' && ascii <= 'z') {
+            bool uppercase = shift_pressed ^ caps_lock;
+            if (uppercase) {
+                ascii = ascii - 'a' + 'A';
+            }
         }
+
+        push_char(ascii);
     }
 
 }
