@@ -9,7 +9,6 @@ namespace ahci {
     // prints the model name via serial + VGA.
     void init();
 
-    // [stub for future] read one sector.
-    // bool read_sectors(u32 lba, u32 count, void* buffer);
-
+    // read sectors or sum
+    bool read_sectors(u64 lba, u32 count, void* buffer);
 }

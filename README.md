@@ -57,6 +57,7 @@ see [`TODO.md`](TODO.md)
 
 - the OSDev wiki, for everything that isn't covered by arguing with Claude about CR0 bits at 1 AM
 - whoever wrote the Multiboot2 spec, for letting me skip writing a bootloader
+- the ext2 spec
 
 > as always, PRs are always welcome. if you contribute, you will be added to the credits! (I'm sure y'all don't care but whatever)
 

@@ -23,6 +23,9 @@
 #include "dev/ahci.hpp"
 #include "tty/tty.hpp"
 
+#include "fs/vfs.hpp"
+#include "lib/string.hpp"
+
 
 extern "C" void kernel_main(u64 multiboot_info_addr) {
     serial::init();
@@ -76,6 +79,30 @@ extern "C" void kernel_main(u64 multiboot_info_addr) {
     });
 
     ahci::init();
+
+    vfs::init(ahci::read_sectors);
+    if (vfs::root_sb) {
+        // list the root directory (for fun, and to prove the fs actually works)
+        vfs::Inode* root = vfs::root_sb->ops->root_inode(vfs::root_sb);
+        if (root && root->ops && root->ops->readdir) {
+            serial::print("vfs: root directory:\n");
+            u8 buf[512];
+            u64 offset = 0;
+            while (true) {
+                ssize_t bytes = root->ops->readdir(root, offset, buf, sizeof(buf));
+                if (bytes <= 0) break;
+                u8* p = buf;
+                while (p < buf + bytes) {
+                    p += 8;  // skip inode number, we just want the name here
+                    const char* name = reinterpret_cast<const char*>(p);
+                    size_t len = string::strnlen(name, sizeof(buf) - (p - buf));
+                    serial::print("  "); serial::print(name); serial::print("\n");
+                    p += len + 1;
+                }
+                offset += bytes;
+            }
+        }
+    }
 
     tty::print("\n=== retux kernel ready ===\n");
     tty::print("type something! alt+F1..F4 to switch VTs.\n\n");

@@ -40,10 +40,28 @@ $(OUT)/kernel.iso: $(OUT)/kernel.bin grub.cfg
 
 iso: $(OUT)/kernel.iso
 
-run: $(OUT)/kernel.iso
-	qemu-system-x86_64 -cdrom $(OUT)/kernel.iso -serial stdio
+
+DISK      := $(OUT)/disk.img
+DISKROOT  := diskroot
+
+$(DISK): $(shell find $(DISKROOT) -type f 2>/dev/null)
+	mkdir -p $(DISKROOT)
+	mkdir -p $(OUT)
+	mke2fs -t ext2 -b 1024 -I 128 \
+	    -O ^64bit,^metadata_csum,^huge_file,^flex_bg \
+	    -d $(DISKROOT) -F $(DISK) 64M
+
+disk: $(DISK)
+
+run: $(OUT)/kernel.iso $(DISK)
+	qemu-system-x86_64 -M q35 \
+	    -cdrom $(OUT)/kernel.iso \
+	    -drive id=disk0,if=none,file=$(DISK),format=raw \
+	    -device ahci,id=ahci0 \
+	    -device ide-hd,drive=disk0,bus=ahci0.0 \
+	    -serial stdio -no-reboot -no-shutdown
 
 clean:
 	rm -rf $(OUT) isodir
 
-.PHONY: all iso run clean
+.PHONY: all iso disk run clean

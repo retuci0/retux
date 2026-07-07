@@ -114,10 +114,9 @@ namespace hpet {
         // legacy replacement route: timer0's interrupt is forced onto IRQ0
         // (the same I/O APIC pin the PIT would use), regardless of whatever
         // GSI its INT_ROUTE_CNF field would otherwise pick.
-        mmio_write(REG_CONFIG, CONFIG_ENABLE_CNF | CONFIG_LEG_RT_CNF);
-
         irq::register_handler(0, hpet_irq_handler);
         apic::set_irq_mask(0, false);
+        mmio_write(REG_CONFIG, CONFIG_ENABLE_CNF | CONFIG_LEG_RT_CNF);
 
         char buf[17];
         serial::print("hpet: periodic IRQ0 programmed, period_fs=0x");

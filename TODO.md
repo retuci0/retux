@@ -18,12 +18,12 @@
 - [x] basic TTY (scrollback, backspace, basic ANSI colors)
 
 ## phase 3: storage & fs
-- [ ] AHCI Driver (SATA). 
+- [x] AHCI Driver (SATA). 
       *PIO-identified reads on the HBA port first. DMA can come later.*
-- [ ] disk partition parsing (MBR / GPT) to find **ext2** partitions.
-- [ ] **VFS (virtual filesystem) layer** (abstraction: `mount`, `open`, `read`, `write`, `readdir`).
+- [x] disk partition parsing (MBR / GPT) to find **ext2** partitions.
+- [x] **VFS (virtual filesystem) layer** (abstraction: `mount`, `open`, `read`, `write`, `readdir`).
 - [ ] **`initrd` support (tar)** - loaded as a Multiboot2 module so loading userspace programs before the disk driver is fully stable is possible.
-- [ ] **`ext2` driver** (superblock, group descriptors, inodes, indirect block traversal; no jouurnaling for now). 
+- [x] **`ext2` driver** (superblock, group descriptors, inodes, indirect block traversal; no jouurnaling for now). 
 
 ## phase 4: multitasking & userspace
 - [ ] preemptive multitasking (context switching, scheduler, `switch_to`).
