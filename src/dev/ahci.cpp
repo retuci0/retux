@@ -1,8 +1,8 @@
 #include "dev/ahci.hpp"
 #include "dev/pci.hpp"
 
-#include "memory/pmm.hpp"
-#include "memory/vmm.hpp"
+#include "mem/pmm.hpp"
+#include "mem/vmm.hpp"
 
 #include "lib/hex.hpp"
 #include "io/serial.hpp"

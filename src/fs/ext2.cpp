@@ -4,7 +4,7 @@
 #include "lib/string.hpp"
 #include "lib/hex.hpp"
 #include "io/serial.hpp"
-#include "memory/heap.hpp"
+#include "mem/heap.hpp"
 
 
 namespace {

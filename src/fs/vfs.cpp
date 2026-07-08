@@ -2,12 +2,13 @@
 
 #include "fs/ext2.hpp"
 #include "fs/partition.hpp"
+#include "fs/tarfs.hpp"
 
 #include "lib/string.hpp"
 #include "lib/hex.hpp"
 
 #include "io/serial.hpp"
-#include "memory/heap.hpp"
+#include "mem/heap.hpp"
 
 
 namespace vfs {
@@ -115,6 +116,10 @@ namespace vfs {
         s_part_ctx.raw_read = read_block;
         s_part_ctx.base_lba = part_lba;
         return ext2::mount(partition_relative_read);
+    }
+
+    SuperBlock* mount_initrd(const u8* base, u64 size) {
+        return tarfs::mount(base, size);
     }
 
     File* open(const char* path) {

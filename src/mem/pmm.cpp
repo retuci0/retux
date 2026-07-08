@@ -1,4 +1,4 @@
-#include "memory/pmm.hpp"
+#include "mem/pmm.hpp"
 
 #include "lib/hex.hpp"
 #include "lib/types.hpp"
@@ -126,6 +126,17 @@ namespace pmm {
         u64 ke = reinterpret_cast<u64>(_kernel_end);
         mark_range_used(ks, ke - ks);
         mark_range_used(0, 0x100000);
+
+        // mark any the initrd as used too, before anything has a chance to
+        // allocate a frame out from under them.
+        // GRUB places these wherever it likes in "available" RAM, so without
+        // this they'd look like free frames to the bitmap above.
+        mb2::for_each_tag(boot_info_addr, [](const mb2::Tag* tag) -> bool {
+            if (tag->type != mb2::TAG_MODULE) return false;
+            const auto* mod = reinterpret_cast<const mb2::ModuleTag*>(tag);
+            mark_range_used(mod->mod_start, mod->mod_end - mod->mod_start);
+            return false;  // keep going
+        });
     }
 
     u64 alloc_frame() {

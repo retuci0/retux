@@ -56,6 +56,11 @@ namespace vfs {
     // returns a SuperBlock on success, nullptr if unrecognised.
     SuperBlock* mount(ReadBlock read_block, u64 part_lba);
 
+    // mount an in-memory tar (USTAR) image - i.e. an initrd loaded as a
+    // Multiboot2 module - as a filesystem. `base` must remain valid for the
+    // lifetime of the mount. returns nullptr if it's not a valid archive.
+    SuperBlock* mount_initrd(const u8* base, u64 size);
+
     // open a file by absolute path. returns File* or nullptr.
     File* open(const char* path);
 

@@ -1,6 +1,6 @@
-#include "memory/vmm.hpp"
+#include "mem/vmm.hpp"
 
-#include "memory/pmm.hpp"
+#include "mem/pmm.hpp"
 
 #include "lib/types.hpp"
 

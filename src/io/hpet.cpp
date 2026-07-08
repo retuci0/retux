@@ -5,7 +5,7 @@
 #include "cpu/irq.hpp"
 #include "cpu/apic.hpp"
 
-#include "memory/vmm.hpp"
+#include "mem/vmm.hpp"
 
 #include "lib/types.hpp"
 #include "lib/hex.hpp"

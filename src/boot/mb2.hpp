@@ -43,11 +43,25 @@ namespace mb2 {
         u32 reserved;
     } __attribute__((packed));
 
-    constexpr u32 TAG_MEMMAP    = 6;
-    constexpr u32 TAG_ACPI_OLD  = 14;  // ACPI 1.0 RSDP, copied verbatim after the tag header
-    constexpr u32 TAG_ACPI_NEW  = 15;  // ACPI >= 2.0 RSDP (extended), same idea
-    constexpr u32 TAG_END       = 0;
-    constexpr u32 MEMMAP_AVAIL  = 1;  // the only type we can give to the PMM
+    // tag type 3 - boot module (Multiboot2 spec §3.6.4).
+    // GRUB loads each `module2 /path arg...` line into physical memory
+    // somewhere it knows is free, and hands us [mod_start, mod_end) plus
+    // whatever string followed the module's path on the config line.
+    // there can be more than one of these in the tag list.
+    struct ModuleTag {
+        u32  type;       // = 3
+        u32  size;
+        u32  mod_start;  // physical address, inclusive
+        u32  mod_end;    // physical address, exclusive
+        char cmdline[];  // null-terminated, flexible array member
+    } __attribute__((packed));
+
+    constexpr u32 TAG_MODULE   = 3;
+    constexpr u32 TAG_MEMMAP   = 6;
+    constexpr u32 TAG_ACPI_OLD = 14;  // ACPI 1.0 RSDP, copied verbatim after the tag header
+    constexpr u32 TAG_ACPI_NEW = 15;  // ACPI >= 2.0 RSDP (extended), same idea
+    constexpr u32 TAG_END      = 0;
+    constexpr u32 MEMMAP_AVAIL = 1;  // the only type we can give to the PMM
 
     // walk the tag list starting from boot_info_addr, return a pointer to
     // the first tag of the requested type, or nullptr if not found.
@@ -64,6 +78,25 @@ namespace mb2 {
             );
         }
         return nullptr;
+    }
+
+    // walk every tag in the list, calling `visitor` on each one. the visitor
+    // returns true to stop iteration early (e.g. once it's found what it
+    // wanted), false to keep going. used when a tag type can repeat (modules)
+    // or when a caller wants to filter on more than just the type field.
+    using TagVisitor = bool (*)(const Tag* tag);
+
+    inline void for_each_tag(u64 boot_info_addr, TagVisitor visitor) {
+        const auto* info = reinterpret_cast<const BootInfo*>(boot_info_addr);
+        const auto* tag  = &info->first_tag;
+
+        while (tag->type != TAG_END) {
+            if (visitor(tag)) return;
+            u32 aligned = (tag->size + 7) & ~7u;
+            tag = reinterpret_cast<const Tag*>(
+                reinterpret_cast<const u8*>(tag) + aligned
+            );
+        }
     }
 
 }

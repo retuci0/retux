@@ -1,6 +1,8 @@
 #include "lib/types.hpp"
 #include "lib/hex.hpp"
 
+#include "boot/mb2.hpp"
+
 #include "cpu/idt.hpp"
 #include "cpu/tss.hpp"
 #include "cpu/pic.hpp"
@@ -15,9 +17,9 @@
 
 #include "boot/acpi.hpp"
 
-#include "memory/pmm.hpp"
-#include "memory/vmm.hpp"
-#include "memory/heap.hpp"
+#include "mem/pmm.hpp"
+#include "mem/vmm.hpp"
+#include "mem/heap.hpp"
 
 #include "dev/pci.hpp"
 #include "dev/ahci.hpp"
@@ -78,9 +80,38 @@ extern "C" void kernel_main(u64 multiboot_info_addr) {
         return false;
     });
 
-    ahci::init();
+    // check for an initrd first and only fall back to scanning the disk for ext2 if it's absent
+    bool have_initrd = false;
+    mb2::for_each_tag(multiboot_info_addr, [](const mb2::Tag* tag) -> bool {
+        if (tag->type != mb2::TAG_MODULE) return false;
+        const auto* mod = reinterpret_cast<const mb2::ModuleTag*>(tag);
 
-    vfs::init(ahci::read_sectors);
+        serial::print("multiboot: module \""); serial::print(mod->cmdline);
+        serial::print("\" at 0x");
+        char buf[17];
+        hex::to_string(mod->mod_start, buf); serial::print(buf);
+        serial::print(" - 0x");
+        hex::to_string(mod->mod_end, buf); serial::print(buf);
+        serial::print("\n");
+
+        // safe to dereference
+        const u8* base = reinterpret_cast<const u8*>(static_cast<u64>(mod->mod_start));
+        u64 size = mod->mod_end - mod->mod_start;
+
+        vfs::SuperBlock* sb = vfs::mount_initrd(base, size);
+        if (sb) {
+            vfs::root_sb = sb;
+            return true;
+        }
+        return false;
+    });
+    have_initrd = (vfs::root_sb != nullptr);
+
+    if (!have_initrd) {
+        ahci::init();
+        vfs::init(ahci::read_sectors);
+    }
+
     if (vfs::root_sb) {
         // list the root directory (for fun, and to prove the fs actually works)
         vfs::Inode* root = vfs::root_sb->ops->root_inode(vfs::root_sb);
@@ -103,6 +134,7 @@ extern "C" void kernel_main(u64 multiboot_info_addr) {
             }
         }
     }
+
 
     tty::print("\n=== retux kernel ready ===\n");
     tty::print("type something! alt+F1..F4 to switch VTs.\n\n");

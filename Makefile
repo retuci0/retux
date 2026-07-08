@@ -3,7 +3,9 @@ LD       := x86_64-elf-ld
 ASM      := nasm
 
 CXXFLAGS := -ffreestanding -fno-exceptions -fno-rtti -mno-red-zone \
-            -mcmodel=large -Wall -Wextra -std=c++17 -MMD -MP -c -Isrc
+            -mcmodel=large -Wall -Wextra -std=c++17 -MMD -MP -c -Isrc \
+            -mno-sse -mno-sse2 -mno-sse3 -mno-mmx -mno-avx -mno-avx2 \
+            -mgeneral-regs-only
 ASFLAGS  := -f elf64
 
 SRC      := src
@@ -32,9 +34,20 @@ $(OUT)/kernel.bin: $(OBJS) linker.ld
 
 -include $(DEPS)
 
-$(OUT)/kernel.iso: $(OUT)/kernel.bin grub.cfg
+INITRDROOT := initrdroot
+INITRD     := $(OUT)/initrd.tar
+
+$(INITRD): $(shell find $(INITRDROOT) -type f 2>/dev/null)
+	mkdir -p $(INITRDROOT)
+	mkdir -p $(OUT)
+	tar --format=ustar -cf $(INITRD) -C $(INITRDROOT) .
+
+initrd: $(INITRD)
+
+$(OUT)/kernel.iso: $(OUT)/kernel.bin $(INITRD) grub.cfg
 	mkdir -p isodir/boot/grub
 	cp $(OUT)/kernel.bin isodir/boot/kernel.bin
+	cp $(INITRD) isodir/boot/initrd.tar
 	cp grub.cfg isodir/boot/grub/grub.cfg
 	grub-mkrescue -o $(OUT)/kernel.iso isodir 2>/dev/null
 
@@ -61,7 +74,17 @@ run: $(OUT)/kernel.iso $(DISK)
 	    -device ide-hd,drive=disk0,bus=ahci0.0 \
 	    -serial stdio -no-reboot -no-shutdown
 
-clean:
-	rm -rf $(OUT) isodir
+debug: $(OUT)/kernel.iso $(DISK)
+	qemu-system-x86_64 -M q35 \
+	    -cdrom $(OUT)/kernel.iso \
+	    -drive id=disk0,if=none,file=$(DISK),format=raw \
+	    -device ahci,id=ahci0 \
+	    -device ide-hd,drive=disk0,bus=ahci0.0 \
+	    -serial stdio -no-reboot -no-shutdown \
+	    -d int,cpu_reset -D out/qemu.log
 
-.PHONY: all iso disk run clean
+clean:
+	rm -rf $(OUT) isodir out diskroot initrdroot
+
+
+.PHONY: all iso disk initrd run clean

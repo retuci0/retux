@@ -21,6 +21,7 @@ this document describes the high‑level design, boot sequence, and core subsyst
 5. a minimal **GDT** is loaded (null, code, data, and a placeholder for the TSS descriptor).
 6. a far jump loads the 64‑bit code segment and execution continues in `long_mode_start`.
 7. data segments are reloaded and `kernel_main` (C++) is called with the Multiboot info address in RDI.
+8. any Multiboot2 **modules** (tag type 3, e.g. an `initrd`) that GRUB loaded stay exactly where it put them - they land somewhere in the boot‑time identity‑mapped low 4 GiB, and `remap_kernel()` (below) never touches memory outside the kernel image, so physical == virtual for a module's `[mod_start, mod_end)` range for the kernel's whole lifetime.
 
 ---
 
@@ -33,6 +34,7 @@ this document describes the high‑level design, boot sequence, and core subsyst
 - reserves:
   - the kernel image (from `_kernel_start` to `_kernel_end`)
   - the first 1 MiB (legacy BIOS areas)
+  - any Multiboot2 modules (tag type 3) - so an `initrd` passed in by GRUB is never handed back out as a free frame
 - provides:
   - `alloc_frame()` - returns a 4 KiB aligned physical address
   - `free_frame()` - self descriptive
@@ -89,14 +91,52 @@ this document describes the high‑level design, boot sequence, and core subsyst
 
 ---
 
-## 6. build & link
-- the **linker script** (`linker.ld`) places the kernel at physical address 1 MiB (the standard for Multiboot).
-- symbols `_kernel_start/end`, `_text_start/end`, etc. are exported for the PMM and VMM.
-- the boot stub is written in NASM, the rest in C++ (compiled with an `x86_64-elf` cross‑compiler).
+## 6. storage & filesystem stack
+
+the storage stack is layered so that each piece only knows about the one below it: **AHCI** hands back raw sectors, **partition parsing** turns those into a partition's sector range, and **ext2** turns that range into files - all reachable through one **VFS** abstraction. an in‑memory **tarfs** driver plugs into the same VFS layer without needing a block device at all.
+
+### AHCI driver (`ahci`)
+- scans PCI for an AHCI controller (class/subclass lookup via the `pci` bus enumerator), initialises the HBA and its first implemented port.
+- `read_sectors(lba, count, buf)` - PIO‑identified reads on the HBA port. DMA is a possible future improvement; correctness came first.
+
+### partition parsing (`partition`)
+- `scan(raw_read, out, max)` reads the MBR (and will read GPT once needed) from LBA 0 and fills a `Partition[]` (start LBA, sector count, type byte).
+- `read_partition(...)` wraps a whole‑disk `ReadBlock` into one scoped to a single partition, translating partition‑relative LBAs to disk‑absolute ones - so filesystem drivers never need to know where on disk they live.
+
+### ext2 driver (`ext2`)
+- `mount(read_fn)` reads the superblock and group descriptor table, and returns a `vfs::SuperBlock*` if the ext2 magic checks out (`nullptr` otherwise).
+- resolves inodes through direct + indirect block pointers (double/triple indirect not yet exercised); no journaling for now.
+
+### tarfs / initrd driver (`tarfs`)
+- `mount(base, size)` parses a **USTAR** archive that already sits fully in memory - normally a Multiboot2 module GRUB loaded for us - with no block device underneath it at all.
+- builds an in‑memory directory tree once at mount time: each tar header is inserted path‑component‑by‑component, creating any missing intermediate directories on the fly (not every tar writer emits explicit directory entries), and reading a file means copying straight out of the archive buffer - no indirection, no on‑disk layout to walk.
+- handles the POSIX `prefix` field for paths longer than the 100‑byte `name` field allows.
+- exists specifically so a minimal userspace (or just a set of early boot files) can be loaded and read **before** the AHCI/ext2 stack has to be trusted - see `main.cpp`'s boot order below.
+
+### VFS layer (`vfs`)
+- a small, fixed vtable abstraction: `SuperBlockOps` (`root_inode`, `get_inode`) and `InodeOps` (`read`, `readdir`) - any driver that implements these two vtables (currently `ext2` and `tarfs`) is a fully usable root filesystem.
+- `directory` entries returned by `readdir` are a flat stream of `[u64 inode_no][NUL‑terminated name]` records, paged by byte offset - callers keep calling with an increasing offset until they get `0` bytes back.
+- `open(path)` walks a path one component at a time via `root_inode` + `get_inode`, building a `File` on success.
+- `init(raw_read)` is the disk‑based bootstrap: scan partitions, try `ext2::mount` on each, and set `root_sb` on the first success.
+
+### boot order (`main.cpp`)
+at boot, the kernel looks for a Multiboot2 module tag first:
+1. if one is found, it's mounted via `vfs::mount_initrd()` and becomes `root_sb` immediately - the AHCI driver and disk scan are **skipped entirely** for this boot.
+2. if no module is present (or it doesn't parse as USTAR), the kernel falls back to `ahci::init()` + `vfs::init(ahci::read_sectors)`, scanning the disk for an ext2 partition as before.
+
+this means a broken or not‑yet‑stable disk path can never block getting *something* mounted and readable - which is the whole point of having an `initrd`.
 
 ---
 
-## 7. future directions
+## 7. build & link
+- the **linker script** (`linker.ld`) places the kernel at physical address 1 MiB (the standard for Multiboot).
+- symbols `_kernel_start/end`, `_text_start/end`, etc. are exported for the PMM and VMM.
+- the boot stub is written in NASM, the rest in C++ (compiled with an `x86_64-elf` cross‑compiler).
+- `make iso` also builds `out/initrd.tar` - a plain USTAR archive of `initrdroot/` (no GNU/PAX extensions, to keep `tarfs`'s parser simple) - and bakes it into the ISO as a Multiboot2 module (`module2 /boot/initrd.tar initrd` in `grub.cfg`).
+
+---
+
+## 8. future directions
 - preemptive multitasking (scheduler)
 - userspace (ring 3) with syscalls
 - ELF loader

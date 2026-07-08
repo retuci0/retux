@@ -2,7 +2,7 @@
 
 #include "boot/acpi.hpp"
 
-#include "memory/vmm.hpp"
+#include "mem/vmm.hpp"
 
 #include "lib/types.hpp"
 #include "lib/hex.hpp"
@@ -104,11 +104,8 @@ namespace apic {
 
         lapic_write(LAPIC_REG_TPR, 0);  // accept every priority level
 
-        // bit 8 here is the APIC's own software enable switch (separate
-        // from the MSR enable bit above). vector 0xFF is the conventional
-        // spurious-interrupt vector - pick something that isn't used for
-        // anything else.
-        lapic_write(LAPIC_REG_SVR, 0x1FF);
+        // vector 0x2F (IRQ15) + enable bit
+        lapic_write(LAPIC_REG_SVR, (0x2F) | (1 << 8));
 
         char buf[17];
         serial::print("apic: local APIC enabled, id=0x");

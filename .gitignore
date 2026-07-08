@@ -1,10 +1,17 @@
+# binaries
 isodir/
+diskroot/
+initrdroot/
 out/
 *.iso
-*.zip
 *.o
+
+# other
 .vscode/
 todo.txt
 .cache/
+*.zip
 
+# compile commands
 compile_commands.json
+compile_commands.tmp
