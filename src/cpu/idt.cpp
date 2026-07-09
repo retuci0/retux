@@ -139,6 +139,12 @@ extern "C" void isr_common_handler(InterruptFrame* frame) {
     print_field("rdi:        ", frame->rdi);
     print_field("rbp:        ", frame->rbp);
 
+    if (frame->vector == 14) {  // #PF - CR2 holds the faulting virtual address
+        u64 cr2;
+        asm volatile("mov %%cr2, %0" : "=r"(cr2));
+        print_field("cr2 (fault addr): ", cr2);
+    }
+
     vga::print("\nKERNEL PANIC: unhandled exception (see serial output)\n");
 
     // no recovery path exists yet. just disable interrupts in case it's a nested fault and stop.

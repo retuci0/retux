@@ -1,6 +1,5 @@
 #include "mem/pmm.hpp"
 
-#include "lib/hex.hpp"
 #include "lib/types.hpp"
 
 #include "boot/mb2.hpp"
@@ -95,12 +94,6 @@ namespace pmm {
         total_frames = 0;
         used_frames  = 0;
 
-        char buf[17];
-        serial::print("pmm: boot_info_addr = 0x");
-        hex::to_string(boot_info_addr, buf);
-        serial::print(buf);
-        serial::print("\n");
-
         // find the memory map tag
         const auto* tag = mb2::find_tag(boot_info_addr, mb2::TAG_MEMMAP);
         if (!tag) {
@@ -126,6 +119,9 @@ namespace pmm {
         u64 ke = reinterpret_cast<u64>(_kernel_end);
         mark_range_used(ks, ke - ks);
         mark_range_used(0, 0x100000);
+
+        const auto* info = reinterpret_cast<const mb2::BootInfo*>(boot_info_addr);
+        mark_range_used(boot_info_addr, info->total_size);
 
         // mark any the initrd as used too, before anything has a chance to
         // allocate a frame out from under them.
@@ -157,17 +153,6 @@ namespace pmm {
         if (frame >= MAX_FRAMES || !is_used(frame)) return;
         set_free(frame);
         --used_frames;
-    }
-
-    void print_stats() {
-        char buf[17];
-        serial::print("pmm: ");
-        hex::to_string(total_frames, buf); serial::print(buf);
-        serial::print(" total frames, ");
-        hex::to_string(used_frames, buf);  serial::print(buf);
-        serial::print(" used, ");
-        hex::to_string(total_frames - used_frames, buf); serial::print(buf);
-        serial::print(" free\n");
     }
 
 }

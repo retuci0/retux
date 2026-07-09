@@ -3,9 +3,8 @@
 #include "cpu/irq.hpp"
 #include "cpu/apic.hpp"
 
+#include "lib/port.hpp"
 #include "lib/types.hpp"
-
-#include "io/serial.hpp"
 
 
 namespace {
@@ -44,8 +43,6 @@ namespace pit {
 
         irq::register_handler(0, pit_irq_handler);
         apic::set_irq_mask(0, false);
-
-        serial::print("pit: periodic IRQ0 programmed\n");
     }
 
     u64 ticks() { return ticks_; }

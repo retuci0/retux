@@ -71,7 +71,6 @@ namespace partition {
             }
         }
         if (is_gpt) {
-            serial::print("partition: GPT detected, parsing...\n");
             // read GPT header at LBA 1
             if (!raw_read(1, 1, sector)) {
                 serial::print("partition: failed to read GPT header\n");
@@ -109,7 +108,6 @@ namespace partition {
                 out[count].valid = true;
                 count++;
             }
-            serial::print("partition: found "); serial::print_dec(count); serial::print(" GPT partitions\n");
             return count;
         }
 
@@ -124,7 +122,6 @@ namespace partition {
             out[count].valid = true;
             count++;
         }
-        serial::print("partition: found "); serial::print_dec(count); serial::print(" MBR partitions\n");
         return count;
     }
 

@@ -5,22 +5,14 @@
 
 ## why?
 
-because the previous version was AI slop and I had no idea what I was doing. this time, I made sure to actually know what
-I was doing. even though I learnt most of what I know from Claude, it was still written by me.
+because the previous version was AI slop and I had no idea what I was doing. this time, I made sure to actually know what I was doing. even though I learnt most of what I know from Claude, it was still written by me.
 
 
 ## what it does (so far)
 
-more than "boots and halts" now, but still nowhere near an OS:
+more than "boots and halts" now, but still nowhere near an OS.
 
-- boots via GRUB2 + Multiboot2
-- climbs from 32-bit protected mode into 64-bit long mode by hand - own page tables, own GDT, no shortcuts
-- has a real memory story: a bitmap PMM, a 4-level VMM (with huge-page splitting and per-section kernel permissions), and a coalescing `kmalloc`/`kfree` heap
-- IDT + exception handlers with a register dump on panic, PIC/APIC, a PIT/HPET tick, PCI enumeration, a PS/2 keyboard driver, and a basic scrollback TTY
-- an AHCI (SATA) driver, MBR/GPT partition parsing, a VFS abstraction, and an ext2 driver - it'll mount a real ext2 disk image and walk its directory tree
-- an `initrd`: a Multiboot2 module containing a plain USTAR archive, mounted in-memory by a small `tarfs` driver - so there's a filesystem to read from before the disk path has to be trusted
-
-that's it so far. no userspace yet - that's next.
+see [`ARCHITECTURE.md`](ARCHITECTURE.md)
 
 
 ## building & running
@@ -33,7 +25,7 @@ you need:
 - `e2fsprogs` (for `mke2fs`, used to build the test disk image)
 - `qemu-system-x86_64`
 
-on Arch:
+on Arch-based distros:
 
 ```
 sudo pacman -S nasm grub xorriso mtools e2fsprogs qemu-full
@@ -78,4 +70,4 @@ see [`TODO.md`](TODO.md)
 
 ## license
 
-see [`LICENSE.md`](LICENSE.md)
+MIT license, see [`LICENSE.md`](LICENSE.md)

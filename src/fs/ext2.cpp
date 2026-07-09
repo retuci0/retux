@@ -358,15 +358,6 @@ namespace ext2 {
         u32 num_groups       = (sb->s_blocks_count + sb->s_blocks_per_group - 1)
                             / sb->s_blocks_per_group;
 
-        char buf[17];
-        serial::print("ext2: block_size=");
-        hex::to_string(block_size, buf); serial::print(buf);
-        serial::print(" groups=");
-        hex::to_string(num_groups, buf); serial::print(buf);
-        serial::print(" inode_size=");
-        hex::to_string(inode_size, buf); serial::print(buf);
-        serial::print("\n");
-
         if (num_groups > Ext2State::MAX_GROUPS) {
             serial::print("ext2: too many block groups (max 128)\n");
             return nullptr;
@@ -412,7 +403,7 @@ namespace ext2 {
         vfs_sb->ops          = &s_sb_ops;
         vfs_sb->private_data = state;
 
-        serial::print("ext2: mounted successfully\n");
+        serial::print("ext2: mounted\n");
         return vfs_sb;
     }
 

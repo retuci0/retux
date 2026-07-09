@@ -172,7 +172,6 @@ namespace vfs {
 
         for (int i = 0; i < n; ++i) {
             if (!parts[i].valid) continue;
-            serial::print("vfs: probing partition "); serial::print_dec(i); serial::print(" for ext2...\n");
             SuperBlock* sb = mount(raw_read, parts[i].start_lba);
             if (sb) {
                 root_sb = sb;
@@ -180,7 +179,6 @@ namespace vfs {
             }
         }
 
-        serial::print("vfs: trying whole-disk ext2 (no partition table)...\n");
         SuperBlock* sb = mount(raw_read, 0);
         if (sb) {
             root_sb = sb;

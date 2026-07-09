@@ -184,9 +184,7 @@ namespace {
 
         u32 sig = sata_port->sig;
         if ((sig >> 16) != 0xEB14 && (sig >> 16) != 0x9669) {
-            serial::print("ahci: port ");
-            char buf[17]; hex::to_string(port_no, buf); serial::print(buf);
-            serial::print(" no ATA device\n");
+            (void)port_no;
             return false;
         }
         return true;
@@ -201,19 +199,6 @@ namespace {
             return;
         }
 
-        // ATA IDENTIFY words 27-46 = model name (40 chars, bytes 54-93).
-        // each word is stored with bytes swapped (ATA convention).
-        char model[41];
-        for (u8 i = 0; i < 20; ++i) {
-            model[2*i]   = static_cast<char>(identify_data[54 + 2*i + 1]);
-            model[2*i+1] = static_cast<char>(identify_data[54 + 2*i]);
-        }
-        model[40] = '\0';
-        for (int i = 39; i >= 0 && model[i] == ' '; --i) model[i] = '\0';
-
-        serial::print("ahci: drive model: ");
-        serial::print(model);
-        serial::print("\n");
     }
 
 }
@@ -224,15 +209,7 @@ namespace ahci {
     void init() {
         bool found = pci::enumerate([](const pci::Device& d) {
             if (d.class_code == 0x01 && d.subclass == 0x06 && d.prog_if == 0x01) {
-                serial::print("ahci: found AHCI controller at ");
-                char buf[17];
-                hex::to_string(d.bus, buf); serial::print(buf); serial::print(":");
-                hex::to_string(d.device, buf); serial::print(buf); serial::print(".");
-                hex::to_string(d.function, buf); serial::print(buf); serial::print("\n");
-
                 u64 abar = pci::get_bar(d.bus, d.device, d.function, 5);
-                serial::print("ahci: ABAR = 0x");
-                hex::to_string(abar, buf); serial::print(buf); serial::print("\n");
 
                 vmm::map(abar, abar, vmm::KERNEL_RW | vmm::PWT | vmm::PCD);
                 hba = reinterpret_cast<volatile HBA*>(abar);
@@ -248,10 +225,10 @@ namespace ahci {
                 u32 ports_impl = hba->pi;
                 for (u8 i = 0; i < 32; ++i) {
                     if (ports_impl & (1u << i)) {
-                        serial::print("ahci: initialising port ");
-                        char buf2[17]; hex::to_string(i, buf2); serial::print(buf2);
-                        serial::print("\n");
-                        if (init_port(i)) send_identify();
+                        if (init_port(i)) {
+                            send_identify();
+                            serial::print("ahci: controller ready\n");
+                        }
                         break;
                     }
                 }

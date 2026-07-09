@@ -5,10 +5,8 @@
 #include "mem/vmm.hpp"
 
 #include "lib/types.hpp"
-#include "lib/hex.hpp"
 
 #include "io/serial.hpp"
-
 
 namespace {
 
@@ -106,12 +104,7 @@ namespace apic {
 
         // vector 0x2F (IRQ15) + enable bit
         lapic_write(LAPIC_REG_SVR, (0x2F) | (1 << 8));
-
-        char buf[17];
-        serial::print("apic: local APIC enabled, id=0x");
-        hex::to_string(lapic_read(LAPIC_REG_ID) >> 24, buf);
-        serial::print(buf);
-        serial::print("\n");
+        serial::print("apic: local APIC enabled\n");
     }
 
     void eoi() {
@@ -120,7 +113,6 @@ namespace apic {
 
     void init_ioapic() {
         if (acpi::ioapic_count() == 0) {
-            serial::print("apic: no I/O APIC to configure\n");
             return;
         }
 
@@ -148,8 +140,7 @@ namespace apic {
             ioapic_write(static_cast<u32>(reg),     low);
             ioapic_write(static_cast<u32>(reg) + 1, high);
         }
-
-        serial::print("apic: I/O APIC configured, all IRQs masked\n");
+        serial::print("apic: I/O APIC ready\n");
     }
 
     void start_test_timer(u8 vector, u32 count) {

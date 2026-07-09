@@ -2,7 +2,6 @@
 
 #include "fs/vfs.hpp"
 #include "lib/string.hpp"
-#include "lib/hex.hpp"
 #include "io/serial.hpp"
 #include "mem/heap.hpp"
 
@@ -315,13 +314,6 @@ namespace tarfs {
 
         sb->ops          = &s_sb_ops;
         sb->private_data = st;
-
-        char buf[17];
-        serial::print("tarfs: mounted initrd, ");
-        hex::to_string(static_cast<u64>(entry_count), buf); serial::print(buf);
-        serial::print(" entries, ");
-        hex::to_string(static_cast<u64>(st->num_nodes), buf); serial::print(buf);
-        serial::print(" nodes\n");
 
         return sb;
     }

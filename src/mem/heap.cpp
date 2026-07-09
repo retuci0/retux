@@ -221,7 +221,6 @@ namespace heap {
     void init() {
         // allocate an initial 1MiB of heap
         grow_heap(256);  // 256 pages
-        serial::print("heap initialised with 1MiB\n");
     }
 
     void* kmalloc(size_t size) {

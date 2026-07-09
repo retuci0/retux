@@ -2,7 +2,7 @@ CXX      := x86_64-elf-g++
 LD       := x86_64-elf-ld
 ASM      := nasm
 
-CXXFLAGS := -ffreestanding -fno-exceptions -fno-rtti -mno-red-zone \
+CXXFLAGS := -g -ffreestanding -fno-exceptions -fno-rtti -mno-red-zone \
             -mcmodel=large -Wall -Wextra -std=c++17 -MMD -MP -c -Isrc \
             -mno-sse -mno-sse2 -mno-sse3 -mno-mmx -mno-avx -mno-avx2 \
             -mgeneral-regs-only
@@ -33,6 +33,7 @@ $(OUT)/kernel.bin: $(OBJS) linker.ld
 	$(LD) -n -T linker.ld -o $@ $(OBJS)
 
 -include $(DEPS)
+
 
 INITRDROOT := initrdroot
 INITRD     := $(OUT)/initrd.tar

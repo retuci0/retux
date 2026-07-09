@@ -1,8 +1,7 @@
 #include "cpu/pic.hpp"
 
+#include "lib/port.hpp"
 #include "lib/types.hpp"
-
-#include "io/serial.hpp"
 
 
 namespace {
@@ -41,8 +40,6 @@ namespace pic {
         // routing from here on.
         port::outb(PIC1_DATA, 0xFF);
         port::outb(PIC2_DATA, 0xFF);
-
-        serial::print("pic: remapped to 0x20-0x2F and fully masked\n");
     }
 
 }

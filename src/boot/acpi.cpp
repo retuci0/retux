@@ -2,8 +2,6 @@
 #include "boot/mb2.hpp"
 
 #include "lib/types.hpp"
-#include "lib/hex.hpp"
-
 #include "io/serial.hpp"
 
 
@@ -217,24 +215,8 @@ namespace acpi {
             p += entry->length;
         }
 
-        char buf[17];
-        serial::print("acpi: local APIC at 0x");
-        hex::to_string(lapic_addr_, buf);
-        serial::print(buf);
-        serial::print(", ");
-        hex::to_string(static_cast<u64>(ioapic_count_), buf);
-        serial::print(buf);
-        serial::print(" I/O APIC(s) found\n");
-
-        if (hpet_.present) {
-            serial::print("acpi: HPET at 0x");
-            hex::to_string(hpet_.address, buf);
-            serial::print(buf);
-            serial::print("\n");
-        } else {
-            serial::print("acpi: no HPET table (or unsupported address space)\n");
-        }
-
+        serial::print(hpet_.present ? "acpi: APIC and HPET found\n"
+                                         : "acpi: APIC found\n");
         return ioapic_count_ > 0;
     }
 

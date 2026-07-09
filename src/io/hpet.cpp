@@ -8,9 +8,6 @@
 #include "mem/vmm.hpp"
 
 #include "lib/types.hpp"
-#include "lib/hex.hpp"
-
-#include "io/serial.hpp"
 
 
 namespace {
@@ -67,7 +64,6 @@ namespace hpet {
 
     bool init(u32 frequency_hz) {
         if (!available()) {
-            serial::print("hpet: no ACPI HPET table - unavailable\n");
             return false;
         }
         if (frequency_hz == 0) frequency_hz = 1;
@@ -78,7 +74,6 @@ namespace hpet {
 
         u64 caps = mmio_read(REG_CAPS);
         if (!(caps & CAPS_LEG_RT_CAP_BIT)) {
-            serial::print("hpet: no legacy-replacement support - unavailable\n");
             base_virt = 0;
             return false;
         }
@@ -88,7 +83,6 @@ namespace hpet {
         // rounded-to-a-divisor frequency.
         u64 period_fs = caps >> 32;
         if (period_fs == 0) {
-            serial::print("hpet: bogus counter period - unavailable\n");
             base_virt = 0;
             return false;
         }
@@ -117,12 +111,6 @@ namespace hpet {
         irq::register_handler(0, hpet_irq_handler);
         apic::set_irq_mask(0, false);
         mmio_write(REG_CONFIG, CONFIG_ENABLE_CNF | CONFIG_LEG_RT_CNF);
-
-        char buf[17];
-        serial::print("hpet: periodic IRQ0 programmed, period_fs=0x");
-        hex::to_string(period_fs, buf);
-        serial::print(buf);
-        serial::print("\n");
 
         return true;
     }

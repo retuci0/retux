@@ -4,8 +4,6 @@
 #include "tty/tty.hpp"
 
 #include "lib/types.hpp"
-#include "io/serial.hpp"
-
 
 namespace {
 
@@ -111,7 +109,6 @@ namespace keyboard {
     void init() {
         irq::register_handler(1, keyboard_handler);
         apic::set_irq_mask(1, false);
-        serial::print("keyboard: IRQ1 enabled\n");
     }
 
     char getchar() {
