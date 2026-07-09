@@ -34,11 +34,11 @@ this document describes the high‑level design, boot sequence, and core subsyst
 - reserves:
   - the kernel image (from `_kernel_start` to `_kernel_end`)
   - the first 1 MiB (legacy BIOS areas)
+  - the Multiboot2 info structure itself, using `BootInfo::total_size`, because GRUB may place the tag list in otherwise available RAM and later code still reads module/ACPI tags from it
   - any Multiboot2 modules (tag type 3) - so an `initrd` passed in by GRUB is never handed back out as a free frame
 - provides:
   - `alloc_frame()` - returns a 4 KiB aligned physical address
   - `free_frame()` - self descriptive
-  - `print_stats()` - for debugging
 
 ### virtual memory manager (`vmm`)
 - manages the x86‑64 4‑level paging structure (PML4 -> PDPT -> PD -> PT).
@@ -86,8 +86,10 @@ this document describes the high‑level design, boot sequence, and core subsyst
 
 
 ## 5. output
-- **serial** (COM1, 38400 baud) - used for debug output and a `print` interface.
+- **serial** (COM1, 38400 baud) - used for concise boot milestones, error/panic diagnostics, and a `print` interface.
 - **VGA** text mode (0xB8000) - 80×25, white on black, with `print` and `clear`.
+
+normal serial boot output is intentionally high signal: it reports major milestones (`cpu and memory ready`, ACPI/APIC, interrupts, timer choice, console, root filesystem, ready) but avoids noisy internals like IDT gate dumps, raw firmware addresses, full PCI enumeration, AHCI port scans, and directory listings. exception handling still prints a register dump, including CR2 for page faults.
 
 ---
 
@@ -131,6 +133,7 @@ this means a broken or not‑yet‑stable disk path can never block getting *som
 ## 7. build & link
 - the **linker script** (`linker.ld`) places the kernel at physical address 1 MiB (the standard for Multiboot).
 - symbols `_kernel_start/end`, `_text_start/end`, etc. are exported for the PMM and VMM.
+- section globs intentionally include compiler/linker generated variants (`.text.*`, `.rodata.*`, `.data.*`, `.bss.*`, `.lbss.*`, and `.eh_frame*`) inside the tracked kernel ranges. this keeps `_kernel_end` past large static data like the PMM bitmap, so the PMM never mistakes part of the kernel image for free RAM.
 - the boot stub is written in NASM, the rest in C++ (compiled with an `x86_64-elf` cross‑compiler).
 - `make iso` also builds `out/initrd.tar` - a plain USTAR archive of `initrdroot/` (no GNU/PAX extensions, to keep `tarfs`'s parser simple) - and bakes it into the ISO as a Multiboot2 module (`module2 /boot/initrd.tar initrd` in `grub.cfg`).
 

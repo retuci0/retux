@@ -22,7 +22,7 @@
       *PIO-identified reads on the HBA port first. DMA can come later.*
 - [x] disk partition parsing (MBR / GPT) to find **ext2** partitions.
 - [x] **VFS (virtual filesystem) layer** (abstraction: `mount`, `open`, `read`, `write`, `readdir`).
-- [ ] **`initrd` support (tar)** - loaded as a Multiboot2 module so loading userspace programs before the disk driver is fully stable is possible.
+- [x] **`initrd` support (tar)** - loaded as a Multiboot2 module so loading userspace programs before the disk driver is fully stable is possible.
 - [x] **`ext2` driver** (superblock, group descriptors, inodes, indirect block traversal; no jouurnaling for now). 
 
 ## phase 4: multitasking & userspace
