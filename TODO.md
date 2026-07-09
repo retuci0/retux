@@ -17,7 +17,7 @@
 - [x] PS/2 Keyboard driver (scancode set 1 -> ASCII translation)
 - [x] basic TTY (scrollback, backspace, basic ANSI colors)
 
-## phase 3: storage & fs
+## ~~phase 3: storage & fs~~
 - [x] AHCI Driver (SATA). 
       *PIO-identified reads on the HBA port first. DMA can come later.*
 - [x] disk partition parsing (MBR / GPT) to find **ext2** partitions.
