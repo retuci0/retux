@@ -4,8 +4,11 @@
 
 
 // this must match the GDT layout in `boot.asm`:
-//   0x00 = null, 0x08 = code, 0x10 = data, 0x18 = TSS (16-byte descriptor)
-constexpr u16 TSS_SELECTOR = 0x18;
+//   0x00 = null,
+//   0x08 = kernel code, 0x10 = kernel data,
+//   0x18 = user data,   0x20 = user code (both DPL=3),
+//   0x28 = TSS (16-byte descriptor).
+constexpr u16 TSS_SELECTOR = 0x28;
 
 // every field offset is architecturally defined - do not reorder
 struct TSS64 {

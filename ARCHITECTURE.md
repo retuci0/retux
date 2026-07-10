@@ -139,10 +139,30 @@ this means a broken or not‑yet‑stable disk path can never block getting *som
 
 ---
 
-## 8. future directions
-- preemptive multitasking (scheduler)
-- userspace (ring 3) with syscalls
+## 8. multitasking (`task`, `sched`)
+
+kernel-mode-only cooperative-looking-but-actually-preemptive round robin, in two layers:
+
+### `task`
+- `Task` is a plain control block: saved `rsp`, a `kmalloc`'d kernel stack, an entry point + argument, a `State` (`Ready` / `Running` / `Dead`), and an intrusive `next` pointer used to thread every live task onto one circular ready queue.
+- `task::create()` allocates the control block and stack, then plants a fake `InitialFrame` on top of the stack shaped exactly like what `switch_to()` would have pushed for a task that's run before - so the very first switch into a new task "returns" straight into `task_trampoline` instead of a real call site.
+
+### `switch.asm`
+- `switch_to(u64* old_rsp_out, u64 new_rsp)` saves the callee-saved register set (`rbx`, `rbp`, `r12`-`r15`) plus `rflags` onto the outgoing stack, stashes the resulting `rsp` through `old_rsp_out`, swaps `rsp` to `new_rsp`, restores the same set from there, and `ret`s - into whatever return address sits on top of the new stack.
+- deliberately doesn't touch caller-saved GPRs, segment registers, or FPU/SSE state - none of that varies between kernel tasks here (single address space, ring 0, `-mgeneral-regs-only` build).
+
+### `sched`
+- `sched::init()` wraps the calling context (`kernel_main`) as a "boot" task with no `task::create()`-manufactured stack of its own, spawns a dedicated `idle` task (`hlt` loop, always `Ready`, guarantees `schedule()` always has *something* to run), and splices them into a two-element ring.
+- `sched::spawn()` creates a task via `task::` and splices it into the ring right after the current one.
+- preemption is driven by whichever timer is active (`pit`/`hpet`) calling `sched::tick()` once per interrupt via `set_tick_callback()` - this only decrements a timeslice counter and sets a flag, since it runs *before* `apic::eoi()` has been sent for that interrupt. the actual switch happens in `sched::maybe_reschedule()`, called from `irq::set_post_eoi_hook()` *after* EOI - so a task that gets suspended mid-timeslice can never delay the next interrupt on that (or any) vector.
+- a task that returns from its entry function falls into `task_trampoline`'s call to `sched::exit_current()`, which marks it `Dead` and switches away permanently. its stack can't be freed right then (it's still executing on it) - it's stashed as a single-slot "zombie" and reclaimed on the next `schedule()` call that runs on a *different* stack.
+
+---
+
+## 9. future directions
+- system call interface + userspace (ring 3)
 - ELF loader
+- a C library port (`newlib`/`mlibc`)
 
 ---
 

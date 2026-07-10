@@ -35,7 +35,11 @@ namespace {
 
     // ensure `table[idx]` points to a valid next-level page table.
     // if the entry is not present, allocate a fresh zeroed frame and
-    // install it. returns a pointer to the next-level table.
+    // install it with `flags`. if it IS already present, widen it to
+    // include any of `flags` (specifically USER / WRITABLE) that it's
+    // missing - since a leaf mapping down this branch requires every
+    // intermediate level to grant at least the permissions the leaf does.
+    // returns a pointer to the next-level table.
     u64* ensure_table(u64* table, u64 idx, u64 flags) {
         if (!(table[idx] & vmm::PRESENT)) {
             u64 frame = pmm::alloc_frame();
@@ -44,6 +48,11 @@ namespace {
             auto* t = reinterpret_cast<u64*>(frame);
             for (int i = 0; i < 512; ++i) t[i] = 0;
             table[idx] = frame | flags | vmm::PRESENT;
+        } else {
+            // entry exists (usually from boot.asm's identity map or a
+            // prior map() call). only OR bits IN, never clear anything -
+            // some other caller may have set it wider than us already.
+            table[idx] |= (flags & (vmm::USER | vmm::WRITABLE));
         }
         return reinterpret_cast<u64*>(entry_phys(table[idx]));
     }
@@ -92,11 +101,17 @@ namespace vmm {
         u64 pt_idx   = (virt >> 12) & 0x1FF;
 
         // walk down the hierarchy, creating missing tables on the way.
-        // intermediate entries always get PRESENT | WRITABLE so we can
-        // reach them regardless of the final page's flags.
+        // intermediate entries always get PRESENT | WRITABLE (so the walk
+        // itself doesn't fault); USER is added conditionally, since
+        // x86-64 requires it at EVERY level of the walk for a ring-3
+        // access to succeed. without this, the leaf PTE could set USER
+        // and still get a #PF because some intermediate lacks it.
+        u64 intermediate = PRESENT | WRITABLE;
+        if (flags & USER) intermediate |= USER;
+
         u64* pml4 = get_pml4();
-        u64* pdpt = ensure_table(pml4, pml4_idx, PRESENT | WRITABLE);
-        u64* pd   = ensure_table(pdpt, pdpt_idx, PRESENT | WRITABLE);
+        u64* pdpt = ensure_table(pml4, pml4_idx, intermediate);
+        u64* pd   = ensure_table(pdpt, pdpt_idx, intermediate);
 
         // if the PD entry covering `virt` is currently a 2MB huge page,
         // we must split it before we can install a 4KB entry inside it.
@@ -104,7 +119,7 @@ namespace vmm {
             split_huge_page(pd, pd_idx);
         }
 
-        u64* pt       = ensure_table(pd, pd_idx, PRESENT | WRITABLE);
+        u64* pt       = ensure_table(pd, pd_idx, intermediate);
         pt[pt_idx]    = phys | flags;
 
         // flush this single address from the TLB. without this, the CPU

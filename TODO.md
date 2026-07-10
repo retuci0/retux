@@ -26,7 +26,7 @@
 - [x] **`ext2` driver** (superblock, group descriptors, inodes, indirect block traversal; no jouurnaling for now). 
 
 ## phase 4: multitasking & userspace
-- [ ] preemptive multitasking (context switching, scheduler, `switch_to`).
+- [x] preemptive multitasking (context switching, scheduler, `switch_to`).
 - [ ] system call interface (syscall/sysret or `int 0x80`).
 - [ ] ELF Loader (parse `Ehdr`/`Phdr`, load segments into user VMA, jump to entry).
 - [ ] port a C Library (`newlib` or `mlibc`) - implement the bare-metal syscall stubs.

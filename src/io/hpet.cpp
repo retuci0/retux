@@ -42,6 +42,8 @@ namespace {
     volatile u64 ticks_ = 0;
     u32 configured_hz   = 0;
 
+    hpet::TickCallback tick_cb = nullptr;
+
     u64 mmio_read(u32 reg) {
         return *reinterpret_cast<volatile u64*>(base_virt + reg);
     }
@@ -52,6 +54,7 @@ namespace {
 
     void hpet_irq_handler(irq::Frame*) {
         ++ticks_;
+        if (tick_cb) tick_cb();
     }
 
 }
@@ -120,6 +123,10 @@ namespace hpet {
     u64 milliseconds() {
         if (configured_hz == 0) return 0;
         return (ticks_ * 1000) / configured_hz;
+    }
+
+    void set_tick_callback(TickCallback cb) {
+        tick_cb = cb;
     }
 
 }

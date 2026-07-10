@@ -30,4 +30,11 @@ namespace hpet {
     // PIT's rounded divisor.
     u64 milliseconds();
 
+    // optional callback invoked at the end of every tick, from IRQ context,
+    // BEFORE `apic::eoi()` has been sent for this interrupt - keep it fast
+    // and non-blocking (e.g. `sched::tick()`, which only touches a counter
+    // and a flag). pass nullptr to clear it.
+    using TickCallback = void (*)();
+    void set_tick_callback(TickCallback cb);
+
 }

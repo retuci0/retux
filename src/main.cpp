@@ -1,11 +1,12 @@
 #include "lib/types.hpp"
-#include "boot/mb2.hpp"
 
+#include "cpu/cpu.hpp"
 #include "cpu/idt.hpp"
 #include "cpu/tss.hpp"
 #include "cpu/pic.hpp"
 #include "cpu/apic.hpp"
 #include "cpu/irq.hpp"
+#include "cpu/syscall.hpp"
 
 #include "io/serial.hpp"
 #include "io/pit.hpp"
@@ -13,15 +14,36 @@
 #include "io/keyboard.hpp"
 
 #include "boot/acpi.hpp"
+#include "boot/mb2.hpp"
 
+#include "mem/heap.hpp"
 #include "mem/pmm.hpp"
 #include "mem/vmm.hpp"
-#include "mem/heap.hpp"
 
 #include "dev/ahci.hpp"
 #include "tty/tty.hpp"
 
 #include "fs/vfs.hpp"
+
+#include "task/sched.hpp"
+#include "task/user.hpp"
+
+
+// spawned as a task once the scheduler is up - moved out of kernel_main's
+// tail so it can be preempted like anything else instead of monopolizing
+// the CPU forever.
+static void kbdecho_task(void*) {
+    while (true) {
+        char c = keyboard::getchar();
+        if (c) {
+            tty::print(c);
+        } else {
+            // nothing to do this quantum - let someone else have it rather
+            // than busy-spinning until the timer preempts us anyway.
+            sched::yield();
+        }
+    }
+}
 
 
 // `extern "C"` disables name mangling
@@ -60,11 +82,25 @@ extern "C" void kernel_main(u64 multiboot_info_addr) {
     // --- timer: HPET or PIT ---
     constexpr u32 TICK_HZ = 1000;
     if (hpet::init(TICK_HZ)) {
+        hpet::set_tick_callback(sched::tick);
         serial::print("timer: HPET\n");
     } else {
         pit::init(TICK_HZ);
+        pit::set_tick_callback(sched::tick);
         serial::print("timer: PIT\n");
     }
+
+    // scheduler: wraps this very context (kernel_main) as the "boot" task,
+    // spawns a dedicated idle task, and hooks itself into the post-EOI
+    // path so timer ticks can actually preempt something.
+    sched::init();
+    irq::set_post_eoi_hook(sched::maybe_reschedule);
+
+    // per-CPU scratch (IA32_KernelGSBase) MUST be set BEFORE syscall::init
+    // enables SYSCALL/SYSRET - the entry stub's first instruction is
+    // `swapgs`, which would swap in garbage otherwise.
+    cpu::init();
+    syscall::init();
 
     tty::init();
     keyboard::init();
@@ -100,12 +136,18 @@ extern "C" void kernel_main(u64 multiboot_info_addr) {
     tty::print("\n=== retux kernel ready ===\n");
     tty::print("type something! alt+F1..F4 to switch VTs.\n\n");
 
-    // echo keys
+    sched::spawn("kbdecho", kbdecho_task, nullptr);
+
+    // proof-of-life for the SYSCALL path: a hand-written ring-3 blob that
+    // does write(1, "hello from ring 3!\n", ...) followed by exit(0).
+    // if you see the "hello" line come out on the tty, ring 3 is real.
+    task::user::spawn_test();
+
+    // kernel_main's own context is the "boot" task from here on (see
+    // sched::init() above) - it has nothing left to do itself, so it just
+    // idles. it stays in the ready queue and will still get scheduled a
+    // slice at a time, same as everything else.
     while (true) {
-        char c = keyboard::getchar();
-        if (c) {
-            tty::print(c);
-        }
         asm volatile("hlt");
     }
 }

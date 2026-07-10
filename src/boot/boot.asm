@@ -216,13 +216,28 @@ boot_error:
 
 section .data
 align 8
+; layout constrained by both SYSRET and SYSCALL:
+;   SYSCALL loads CS = STAR[47:32],    SS = STAR[47:32] + 8
+;   SYSRET  loads CS = STAR[63:48]+16, SS = STAR[63:48] + 8   (64-bit form)
+; so with STAR[47:32] = 0x08 and STAR[63:48] = 0x10:
+;   kernel_code at 0x08, kernel_data at 0x10,
+;   user_data   at 0x18, user_code   at 0x20  (both DPL=3),
+;   TSS at 0x28 (double-width descriptor).
 gdt64:
-    dq 0                                          ; 0x00: null descriptor
-.code_segment: equ $ - gdt64                      ; 0x08
-    dq (1<<43) | (1<<44) | (1<<47) | (1<<53)      ; executable, code/data, present, long-mode
-.data_segment: equ $ - gdt64                      ; 0x10
-    dq (1<<41) | (1<<44) | (1<<47)                ; writable, code/data, present
-.tss_segment:  equ $ - gdt64                      ; 0x18
+    dq 0                                                ; 0x00: null descriptor
+.kernel_code: equ $ - gdt64                             ; 0x08
+    dq (1<<43) | (1<<44) | (1<<47) | (1<<53)            ; executable, code/data, present, long-mode
+.kernel_data: equ $ - gdt64                             ; 0x10
+    dq (1<<41) | (1<<44) | (1<<47)                      ; writable, code/data, present
+.user_data:   equ $ - gdt64                             ; 0x18
+    dq (1<<41) | (1<<44) | (1<<47) | (3<<45)            ; writable, code/data, present, DPL=3
+.user_code:   equ $ - gdt64                             ; 0x20
+    dq (1<<43) | (1<<44) | (1<<47) | (1<<53) | (3<<45)  ; exec, present, long-mode, DPL=3
+.tss_segment: equ $ - gdt64                             ; 0x28
+
+; kept for the boot stub's `mov ax, gdt64.data_segment` line below.
+.data_segment: equ .kernel_data
+.code_segment: equ .kernel_code
 
 ; 16-byte TSS descriptor slot, zero for now, filled by tss::init() at runtime.
 ; a 64-bit TSS descriptor is double-width to hold the full 64-bit base address.
