@@ -27,7 +27,7 @@
 
 ## phase 4: multitasking & userspace
 - [x] preemptive multitasking (context switching, scheduler, `switch_to`).
-- [ ] system call interface (syscall/sysret or `int 0x80`).
+- [x] system call interface (syscall/sysret or `int 0x80`).
 - [ ] ELF Loader (parse `Ehdr`/`Phdr`, load segments into user VMA, jump to entry).
 - [ ] port a C Library (`newlib` or `mlibc`) - implement the bare-metal syscall stubs.
 - [ ] implement a simple shell (`retsh`?) that can fork/exec commands from the initrd/ext2 volume.
