@@ -159,10 +159,36 @@ kernel-mode-only cooperative-looking-but-actually-preemptive round robin, in two
 
 ---
 
-## 9. future directions
-- system call interface + userspace (ring 3)
-- ELF loader
-- a C library port (`newlib`/`mlibc`)
+## 9. userspace: syscalls, ELF loading, Linux-ABI compatibility
+
+### system calls (`cpu/syscall`)
+- `SYSCALL`/`SYSRET`-based (not `int 0x80`) - `syscall::init()` programs `STAR`/`LSTAR`/`FMASK` and flips `EFER.SCE`. entry (`cpu/syscall_entry.asm`) `swapgs`es to the per-CPU `CpuLocal` (`cpu/cpu.hpp`) to find the current task's kernel stack, builds a `syscall::Frame` on it, and calls into `syscall_dispatch()`.
+- calling convention and syscall numbers are the **real Linux x86-64 ABI** (`rax`=number, `rdi`/`rsi`/`rdx`/`r10`/`r8`/`r9`=args 0-5) - not a lookalike. an unimplemented number logs itself to serial and returns `-ENOSYS` rather than guessing, which is how bring-up against real binaries actually proceeds: run it, see what it blocked on, implement that.
+- implemented: `read`/`write`/`writev`/`open`/`openat`/`close`/`lseek`/`fstat`/`ioctl` (file I/O, backed by a per-`Task` `fds[]` table over the VFS), `brk`/`mmap`/`mprotect`/`munmap` (anonymous-only; `brk` and `mmap` each get a fixed, non-overlapping bump region per task), `arch_prctl` (TLS via `IA32_FS_BASE`, restored per-task on every `sched::schedule()` switch), `exit`/`exit_group`, `set_tid_address`/`set_robust_list`/`rt_sigaction`/`rt_sigprocmask` (no-op stubs - enough for musl's single-threaded startup path to proceed), `uname` (deliberately claims to **be** "Linux", not "retux" - same trick WSL1/Linuxulator play), `getpid`/`getuid`/etc. (dummy), `clock_gettime`, `getrandom`.
+
+### ELF loader (`task/elf`)
+- loads a 64-bit LE `ET_EXEC` (non-PIE, statically linked) x86-64 binary's `PT_LOAD` segments into the shared address space with per-segment `PRESENT`/`USER`/`WRITABLE`/`NO_EXECUTE` permissions derived from `p_flags`. no relocation, no dynamic linker (`ET_DYN`/PIE unsupported) - matches what `-static -no-pie` compiler output looks like.
+- also reports `phdr_vaddr`/`phnum`/`phentsize` (for `AT_PHDR`/`AT_PHNUM`/`AT_PHENT`) and the highest mapped address (where `brk` starts) - everything `task/user.cpp` needs to build a real Linux-ABI process, not just jump to an entry point.
+
+### Linux-ABI process bring-up (`task/user::spawn_from_elf`)
+- builds the exact stack layout Linux binaries expect at their initial `RSP` - `[argc][argv][NULL][envp][NULL][auxv pairs][AT_NULL]` followed by the string data those pointers reference - since musl's `_start` reads this straight off the stack rather than taking `argc`/`argv` in registers. gets this wrong and the binary segfaults or misreads before `main()` is ever reached.
+- SSE is enabled at boot (`boot.asm`, `CR4.OSFXSR`/`OSXMMEXCPT`) even though the kernel's own code never uses it (`-mgeneral-regs-only`) - SSE2 is mandatory x86-64 SysV ABI baseline, and real compiler output (musl's own `__set_thread_area` included) assumes it's on. `switch.asm` still doesn't save/restore XMM state - safe only because kernel code never touches it and only one ring-3 task is ever resident *per address space* (there's no reason two concurrently-resident Linux tasks would ever interleave XMM state through the same registers - each only ever sees its own).
+- ELF loading + stack setup happen lazily, inside the spawned task's own entry function (`linux_task_entry`), not synchronously in the caller - every mapping needs to land in the new task's own private address space, which is only the active one once the scheduler has actually switched into it. a bad path/corrupt ELF is therefore no longer caught synchronously by `spawn_from_elf`'s caller; the task just logs to serial and exits immediately.
+- see `testbins/` for the Docker-based musl toolchain workflow used to build real test binaries against this.
+
+### per-task address spaces (`mem/vmm::create_address_space`)
+- every Linux task gets its own private `PML4` (`Task::cr3`, loaded by `sched.cpp`'s `schedule()` whenever it's non-zero - kernel-only tasks like `idle`/`kbdecho` leave `cr3` at 0 and just keep whatever's already loaded, since they only ever touch globally-shared mappings).
+- this requires a **physmap**: a fixed high-half window (`vmm::PHYSMAP_BASE`, `0xFFFF'C000'0000'0000`) mapping *all* physical RAM 1:1-offset, identically in every address space, built for free at boot (`boot.asm`'s `p3_table_physmap` reuses the same physical PDs as the low identity map, just reachable through a second PML4 slot). without it, `vmm.cpp`'s own page-table-walking code (which turns a physical frame address into a dereferenceable kernel pointer) would break the moment a freshly allocated page-table frame isn't mapped anywhere in whichever CR3 happens to be active - which is the normal case once more than one address space exists.
+- a fresh address space shares the kernel heap's and physmap's PML4 entries verbatim (global, static after boot), plus *most* of the low 4GiB (PML4 slot 0) - kernel image, and critically every device MMIO mapping (`local APIC`, I/O APIC, HPET, AHCI BARs - all mapped once at boot, at their own fixed physical/identity addresses) - **except** a reserved low window (`2MiB`-`16MiB`) held back for a non-PIE ELF's fixed `0x400000` load address. this low-range entanglement (kernel/device state and user code sharing the same 4GiB window) is what a higher-half kernel would avoid by construction; out of scope here, so the reserved-window carve-out is a pragmatic stand-in.
+- getting this right surfaced two previously-latent scheduler bugs (see `TODO.md` phase 4) that had simply never been exercised by any single-ring-3-task test: `sched.cpp`'s `reap_zombie()` freeing a dead task without unlinking it from the ready-queue ring first (dangling `next` pointer), and `TSS.RSP0` never being kept in sync per-task (only `cpu_local.kernel_rsp`, used by `SYSCALL`, was - a hardware IRQ landing mid-ring-3 uses `TSS.RSP0` instead). both fixed alongside this work. a third, related bug: `[[noreturn]] sys_exit` bypasses `syscall_entry`'s tail (the `swapgs` that restores `GS_BASE` before `SYSRET`) by jumping straight into `sched::exit_current()` - left unfixed, the *next* task's first ring-3 entry would inherit a stuck kernel `GS_BASE`, corrupting its first syscall. `sys_exit` now does the matching `swapgs` itself before abandoning the normal return path.
+- **known limitation**: no teardown on task exit - a dead task's private page tables and code/stack/`brk`/`mmap` physical frames are simply leaked, not freed. fine for a demo spawning a handful of tasks, a real problem for anything long-running.
+
+---
+
+## 10. future directions
+- address-space teardown on task exit (free a dead task's private page tables + frames, not just its kernel stack)
+- `fork`/`exec` + a shell (`retsh`) that can run commands from the initrd/ext2 volume
+- dynamic linking / PIE (`ET_DYN`) support in the ELF loader
 
 ---
 

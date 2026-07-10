@@ -2,6 +2,7 @@
 #include "task/task.hpp"
 
 #include "cpu/cpu.hpp"
+#include "cpu/tss.hpp"
 
 #include "mem/heap.hpp"
 
@@ -45,6 +46,11 @@ namespace {
         // get reaped on some later `schedule()` call once `current_` has
         // moved on to something else.
         if (zombie_ == current_) return;
+
+        Task* prev = current_;
+        while (prev->next != zombie_) prev = prev->next;
+        prev->next = zombie_->next;
+
         heap::kfree(reinterpret_cast<void*>(zombie_->stack_base));
         heap::kfree(zombie_);
         zombie_ = nullptr;
@@ -102,6 +108,34 @@ namespace {
         // since it won't ever take a syscall to notice.
         if (next->kernel_stack_top != 0) {
             cpu::local()->kernel_rsp = next->kernel_stack_top;
+
+            // same idea, for the OTHER way ring-3 code re-enters ring 0: a
+            // hardware IRQ (e.g. the timer) landing while this task is
+            // executing in ring 3 goes through the IDT's normal (non-IST)
+            // gate mechanism, which loads its stack from the TSS's RSP0 -
+            // NOT from cpu_local. left unsynced, any interrupt arriving
+            // mid-ring-3 for this task would land on whatever task's stack
+            // RSP0 last pointed at, corrupting that task's saved rsp the
+            // moment schedule() (called from the IRQ's post-EOI hook) saves
+            // the "current" rsp into the wrong Task.
+            tss::set_kernel_stack(next->kernel_stack_top);
+        }
+
+        // restore the incoming task's TLS pointer (set via
+        // arch_prctl(ARCH_SET_FS, ...) - cpu/syscall.cpp) so it doesn't
+        // inherit whatever the previously-running task last set FS_BASE to.
+        // a no-op for kernel-only tasks, which never touch fs_base (stays 0).
+        cpu::wrmsr(cpu::IA32_FS_BASE, next->fs_base);
+
+        // load the incoming task's own address space, if it has one (see
+        // `vmm::create_address_space()`). 0 = "no private address space"
+        // (every kernel-only task) - deliberately leave CR3 alone rather
+        // than switching to anything, since those tasks only ever touch
+        // globally-shared mappings (kernel image, heap, physmap), present
+        // in every address space by construction - switching into one
+        // needlessly would just be an extra, pointless TLB flush.
+        if (next->cr3 != 0) {
+            asm volatile("mov %0, %%cr3" : : "r"(next->cr3) : "memory");
         }
 
         switch_to(&old->rsp, next->rsp);
@@ -141,6 +175,12 @@ namespace sched {
         boot->state            = State::Running;
         boot->entry            = nullptr;
         boot->arg              = nullptr;
+        boot->fs_base   = 0;
+        boot->cr3       = 0;
+        boot->brk_start = 0;
+        boot->brk_cur   = 0;
+        boot->mmap_next = 0;
+        for (u32 i = 0; i < Task::MAX_FDS; ++i) boot->fds[i] = nullptr;
         boot->name[0] = 'b'; boot->name[1] = 'o'; boot->name[2] = 'o';
         boot->name[3] = 't'; boot->name[4] = '\0';
 
@@ -155,8 +195,8 @@ namespace sched {
         serial::print("sched: ready (boot + idle tasks)\n");
     }
 
-    Task* spawn(const char* name, task::EntryFn entry, void* arg, u64 stack_size) {
-        Task* t = task::create(name, entry, arg, stack_size);
+    Task* spawn(const char* name, task::EntryFn entry, void* arg, u64 stack_size, u64 cr3) {
+        Task* t = task::create(name, entry, arg, stack_size, cr3);
         if (!t) return nullptr;
 
         // splice in right after the current task.

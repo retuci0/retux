@@ -140,8 +140,8 @@ extern "C" void kernel_main(u64 multiboot_info_addr) {
 
     // proof-of-life for the SYSCALL path: a hand-written ring-3 blob that
     // does write(1, "hello from ring 3!\n", ...) followed by exit(0).
-    // if you see the "hello" line come out on the tty, ring 3 is real.
-    task::user::spawn_test();
+    task::user::spawn_from_elf("/hello");
+    task::user::spawn_from_elf("/printf_test");
 
     // kernel_main's own context is the "boot" task from here on (see
     // sched::init() above) - it has nothing left to do itself, so it just

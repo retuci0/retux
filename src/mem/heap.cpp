@@ -13,8 +13,8 @@
 namespace {
 
     // --- heap virtual address range ---
-    constexpr u64 HEAP_START = 0xFFFF800000000000ULL;
-    constexpr u64 HEAP_MAX   = 0xFFFF8000FFFFFFFFULL;   // 4 GiB total
+    constexpr u64 HEAP_START = heap::VIRT_BASE;
+    constexpr u64 HEAP_MAX   = heap::VIRT_BASE + 0xFFFFFFFFULL;   // 4 GiB total
 
     constexpr u64 PAGE_SIZE = 4096;
     constexpr u64 ALIGNMENT = 8;  // align allocs to 8 bytes

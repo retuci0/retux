@@ -31,6 +31,9 @@ namespace vfs {
     struct Inode {
         u64 ino;
         u64 size;
+        bool is_dir;  // populated by every driver's inode constructor
+                      // (ext2::make_vfs_inode, tarfs's) - `fstat` (cpu/
+                      // syscall.cpp) needs it for S_IFDIR vs S_IFREG.
         SuperBlock* sb;
         InodeOps*   ops;
         void*       private_data;

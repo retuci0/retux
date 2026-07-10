@@ -25,9 +25,10 @@ namespace sched {
     void init();
 
     // create a new task and add it to the ready queue, right after the
-    // currently running one.
+    // currently running one. `cr3` - see `task::create()` - defaults to 0
+    // ("no private address space", shares whatever's active).
     task::Task* spawn(const char* name, task::EntryFn entry, void* arg,
-                       u64 stack_size = 16 * 1024);
+                       u64 stack_size = 16 * 1024, u64 cr3 = 0);
 
     // voluntarily give up the remainder of the current timeslice.
     void yield();

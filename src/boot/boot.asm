@@ -35,6 +35,12 @@ p2_table:     resb 4096      ; for 0-1 GiB
 p2_table2:    resb 4096      ; for 1-2 GiB
 p2_table3:    resb 4096      ; for 2-3 GiB
 p2_table4:    resb 4096      ; for 3-4 GiB
+; second PDPT for the "physmap" - the SAME 4 PDs above, reachable through a
+; second PML4 slot (see set_up_page_tables below). lets the kernel turn any
+; physical address into a valid pointer (`vmm::phys_to_virt`) regardless of
+; which CR3 is currently loaded - load-bearing once per-task page tables
+; exist and stop sharing the low identity map wholesale (mem/vmm.cpp).
+p3_table_physmap: resb 4096
 stack_bottom: resb 16384
 stack_top:
 
@@ -137,6 +143,33 @@ set_up_page_tables:
     or eax, 0b11
     mov [p3_table + 24], eax
 
+    ; physmap: a SECOND PDPT pointing at the exact same 4 PDs above, reached
+    ; through PML4 index 384 (virtual base 0xFFFF'C000'0000'0000 - see
+    ; mem/vmm.cpp's PHYSMAP_BASE) instead of PML4 index 0. no new physical
+    ; frames - just a second path to the identical PD/2MB-huge-page entries,
+    ; so the same physical range is reachable both via the low identity map
+    ; AND via this fixed high-half window.
+    mov eax, p2_table
+    or eax, 0b11
+    mov [p3_table_physmap], eax
+
+    mov eax, p2_table2
+    or eax, 0b11
+    mov [p3_table_physmap + 8], eax
+
+    mov eax, p2_table3
+    or eax, 0b11
+    mov [p3_table_physmap + 16], eax
+
+    mov eax, p2_table4
+    or eax, 0b11
+    mov [p3_table_physmap + 24], eax
+
+    ; install the physmap PDPT at PML4[384] (byte offset 384*8 = 0xC00).
+    mov eax, p3_table_physmap
+    or eax, 0b11
+    mov [p4_table + 0xC00], eax
+
     ; fill each PD with 512 huge pages
     mov esi, p2_table          ; first PD
     mov edi, 0                 ; base physical address (in bytes)
@@ -184,10 +217,27 @@ enable_paging:
     or eax, 1 << 5
     mov cr4, eax
 
-    ; enable OSFXSR and OSXMMEXCPT in CR4.
-    ; mov eax, cr4
-    ; or eax, (1 << 9) | (1 << 10)   ; OSFXSR + OSXMMEXCPT
-    ; mov cr4, eax
+    ; enable SSE. the kernel's own code never emits SSE instructions (built
+    ; with -mgeneral-regs-only) so this is purely for ring-3: SSE2 is part
+    ; of the mandatory x86-64 SysV ABI baseline, and any real compiler
+    ; output - not just hand-picked "SSE-free" code - assumes it's on. musl's
+    ; own startup path (`__set_thread_area`) uses `movq %rbx,%xmm0`
+    ; unconditionally, so without this every real ELF binary #UDs before
+    ; main() is ever reached.
+    ;
+    ; CR0: clear EM (bit 2, "no x87/SSE, #UD instead") and set MP (bit 1,
+    ; "WAIT/FWAIT obey TS") - the standard pairing for enabling FP/SSE.
+    mov eax, cr0
+    and eax, ~(1 << 2)
+    or  eax, 1 << 1
+    mov cr0, eax
+
+    ; CR4: OSFXSR (bit 9, FXSAVE/FXRSTOR + actually allows SSE) and
+    ; OSXMMEXCPT (bit 10, unmasked SIMD FP exceptions land as #XM/19
+    ; instead of silently corrupting state).
+    mov eax, cr4
+    or eax, (1 << 9) | (1 << 10)
+    mov cr4, eax
 
     ; set the long mode enable bit in the EFER MSR.
     mov ecx, 0xC0000080

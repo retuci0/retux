@@ -96,4 +96,8 @@ namespace tss {
         asm volatile("ltr %%ax" : : "a"(TSS_SELECTOR));
     }
 
+    void set_kernel_stack(u64 rsp0) {
+        tss_.rsp[0] = rsp0;
+    }
+
 }

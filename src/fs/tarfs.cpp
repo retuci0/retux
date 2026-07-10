@@ -187,6 +187,7 @@ namespace {
 
         inode->ino          = static_cast<u64>(node_idx);
         inode->size         = st->nodes[node_idx].size;
+        inode->is_dir       = st->nodes[node_idx].is_dir;
         inode->sb           = sb;
         inode->ops          = &s_inode_ops;
         inode->private_data = boxed_idx;

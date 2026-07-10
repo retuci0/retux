@@ -232,6 +232,7 @@ namespace {
 
         inode->ino          = ino;
         inode->size         = ref->disk.i_size;
+        inode->is_dir       = (ref->disk.i_mode & 0xF000) == 0x4000;  // S_IFDIR
         inode->sb           = sb;
         inode->ops          = &s_inode_ops;
         inode->private_data = ref;

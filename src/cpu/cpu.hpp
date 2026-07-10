@@ -35,4 +35,12 @@ namespace cpu {
     // pointer to the singleton, for `sched::schedule()` to poke at.
     CpuLocal* local();
 
+    // MSR base for the segment retux actually uses at runtime for TLS -
+    // `arch_prctl(ARCH_SET_FS, ...)` (cpu/syscall.cpp) writes here directly,
+    // and `sched::schedule()` restores it per-task from `Task::fs_base`.
+    constexpr u32 IA32_FS_BASE = 0xC000'0100;
+
+    u64  rdmsr(u32 msr);
+    void wrmsr(u32 msr, u64 value);
+
 }

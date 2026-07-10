@@ -32,7 +32,7 @@ namespace {
 
 namespace task {
 
-    Task* create(const char* name, EntryFn entry, void* arg, u64 stack_size) {
+    Task* create(const char* name, EntryFn entry, void* arg, u64 stack_size, u64 cr3) {
         Task* t = static_cast<Task*>(heap::kmalloc(sizeof(Task)));
         if (!t) return nullptr;
 
@@ -72,6 +72,13 @@ namespace task {
         t->entry      = entry;
         t->arg        = arg;
         t->next       = nullptr;
+
+        t->fs_base    = 0;
+        t->cr3        = cr3;
+        t->brk_start  = 0;
+        t->brk_cur    = 0;
+        t->mmap_next  = 0;
+        for (u32 i = 0; i < Task::MAX_FDS; ++i) t->fds[i] = nullptr;
 
         size_t i = 0;
         for (; name && name[i] != '\0' && i + 1 < sizeof(t->name); ++i) {
