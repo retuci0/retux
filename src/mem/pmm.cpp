@@ -15,11 +15,9 @@ namespace {
     constexpr u64 MAX_FRAMES  = MAX_PHYS / PAGE_SIZE;  // 1.048.576 frames
     constexpr u64 BITMAP_SIZE = MAX_FRAMES / 8;        // 131.072 bytes = 128KB
 
-    // one bit per 4KB physical frame. 1 = used/reserved, 0 = free.
-    // starts with everything reserved, we explicitly mark only
-    // the regions the bootloader says are available RAM as free.
-    // that way any range we forgot to initialise is safe (reserved)
-    // rather than silently handed out.
+    // one bit per 4KB frame, 1 = used. starts all-reserved; only regions the
+    // bootloader reports as available RAM get marked free, so anything missed
+    // stays reserved rather than being handed out.
     u8 bitmap[BITMAP_SIZE];
 
     u64 total_frames = 0;
@@ -123,10 +121,8 @@ namespace pmm {
         const auto* info = reinterpret_cast<const mb2::BootInfo*>(boot_info_addr);
         mark_range_used(boot_info_addr, info->total_size);
 
-        // mark any the initrd as used too, before anything has a chance to
-        // allocate a frame out from under them.
-        // GRUB places these wherever it likes in "available" RAM, so without
-        // this they'd look like free frames to the bitmap above.
+        // reserve the initrd too - GRUB drops it in "available" RAM, so it'd
+        // otherwise look free and get allocated out from under us.
         mb2::for_each_tag(boot_info_addr, [](const mb2::Tag* tag) -> bool {
             if (tag->type != mb2::TAG_MODULE) return false;
             const auto* mod = reinterpret_cast<const mb2::ModuleTag*>(tag);
@@ -154,5 +150,8 @@ namespace pmm {
         set_free(frame);
         --used_frames;
     }
+
+    u64 total_frame_count() { return total_frames; }
+    u64 used_frame_count()  { return used_frames; }
 
 }

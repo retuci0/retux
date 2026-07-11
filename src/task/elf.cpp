@@ -60,12 +60,9 @@ namespace {
     inline u64 page_down(u64 x) { return x & ~(PAGE_SIZE - 1); }
     inline u64 page_up(u64 x)   { return (x + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1); }
 
-    // map and populate every page backing one PT_LOAD segment. pages are
-    // allocated fresh from the PMM (never reused across segments, even if
-    // segments happen to share a page-aligned boundary), zeroed, then have
-    // whatever slice of the segment they cover copied in from `file_data`
-    // - which for the tail of `p_memsz` beyond `p_filesz` (bss) is nothing,
-    // leaving that part of the page zero as required.
+    // map and fill every page of one PT_LOAD: fresh PMM frames, zeroed, then
+    // the covered slice copied from file_data - the p_memsz-beyond-p_filesz
+    // tail (bss) copies nothing and stays zero.
     bool load_segment(const u8* file_data, u64 file_size, const Elf64_Phdr& ph) {
         if (ph.p_filesz > ph.p_memsz) return false;
         if (ph.p_offset > file_size || ph.p_filesz > file_size - ph.p_offset) return false;
@@ -84,10 +81,8 @@ namespace {
             u64 phys = pmm::alloc_frame();
             vmm::map(va, phys, flags);
 
-            // via the physmap, not a raw cast - `va` is mapped in the
-            // CALLING task's own (possibly private) address space, which
-            // generally doesn't have this fresh frame identity-mapped
-            // anywhere else. see vmm.hpp's `phys_to_virt`.
+            // physmap, not a raw cast - the fresh frame isn't identity-mapped
+            // in the calling task's (private) address space.
             u8* kptr = reinterpret_cast<u8*>(vmm::phys_to_virt(phys));
             string::memset(kptr, 0, PAGE_SIZE);
 

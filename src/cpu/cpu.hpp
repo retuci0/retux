@@ -3,42 +3,41 @@
 #include "lib/types.hpp"
 
 
-// tiny per-CPU scratch area that the syscall entry stub reads via `swapgs`
-// + `[gs:offset]`. right now the whole kernel is single-CPU, so there is
-// exactly one instance, addressed via `IA32_KernelGSBase` (0xC000_0102) -
-// which SYSCALL doesn't touch directly but which `swapgs` exchanges with
-// `GS_BASE`, so a `swapgs` right at the top of the SYSCALL entry point
-// makes `[gs:0]` refer to fields of this struct instead of whatever
-// nonsense value userspace had in GS at the time of the syscall.
+// per-CPU scratch the syscall entry stub reaches via swapgs + [gs:offset].
+// single-CPU, so one instance, pointed at by IA32_KernelGSBase; the entry
+// stub's opening swapgs makes [gs:0] refer to this struct rather than
+// userspace's GS.
 //
-// field offsets are hardcoded in `syscall_entry.asm` - do NOT reorder
-// without updating both places in lockstep.
+// field offsets are hardcoded in syscall_entry.asm - don't reorder without
+// updating both.
 
 namespace cpu {
 
     struct CpuLocal {
-        u64 kernel_rsp;  // offset 0  - top of the currently-running task's kernel stack.
-                         //             kept in sync by `sched::schedule()` on every switch.
-        u64 user_rsp;    // offset 8  - scratch: syscall entry stashes user RSP here
-                         //             before switching to `kernel_rsp` above.
+        u64 kernel_rsp;  // top of the running task's kernel stack (synced by schedule())
+        u64 user_rsp;    // scratch: entry stashes user RSP here before switching
     };
 
     static constexpr u32 CPU_LOCAL_KERNEL_RSP_OFFSET = 0;
     static constexpr u32 CPU_LOCAL_USER_RSP_OFFSET   = 8;
 
-    // program `IA32_KernelGSBase` to point at the (single) CpuLocal. call
-    // once, from `kernel_main`, BEFORE `syscall::init()` - the syscall
-    // entry stub's very first instruction is `swapgs`, and that swap is
-    // only meaningful if this MSR has been programmed already.
+    // point IA32_KernelGSBase at the CpuLocal. call once, before syscall::init()
+    // - the entry stub's first instruction is swapgs, meaningless until this
+    // MSR is set.
     void init();
 
-    // pointer to the singleton, for `sched::schedule()` to poke at.
+    // pointer to the singleton, for schedule().
     CpuLocal* local();
 
-    // MSR base for the segment retux actually uses at runtime for TLS -
-    // `arch_prctl(ARCH_SET_FS, ...)` (cpu/syscall.cpp) writes here directly,
-    // and `sched::schedule()` restores it per-task from `Task::fs_base`.
+    // TLS base - arch_prctl(ARCH_SET_FS) writes it, schedule() restores it
+    // per-task from Task::fs_base.
     constexpr u32 IA32_FS_BASE = 0xC000'0100;
+
+    // the two swapgs-exchanged MSRs. exposed because wait4() writes them
+    // directly (wrmsr, not swapgs) - once more than one task can be mid-syscall,
+    // swapgs's "restore whatever was there" isn't safe; see yield_blocking().
+    constexpr u32 IA32_GS_BASE        = 0xC000'0101;
+    constexpr u32 IA32_KERNEL_GS_BASE = 0xC000'0102;
 
     u64  rdmsr(u32 msr);
     void wrmsr(u32 msr, u64 value);

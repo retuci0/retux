@@ -9,10 +9,7 @@
 
 namespace mb2 {
 
-    // every tag starts with this header:
-    // type tells you what is is
-    // size tells you, well, the size
-    // so you can skip tags you don't care about
+    // common header on every tag: type + size (to skip tags you don't want).
     struct Tag {
         u32 type;
         u32 size;
@@ -43,11 +40,9 @@ namespace mb2 {
         u32 reserved;
     } __attribute__((packed));
 
-    // tag type 3 - boot module (Multiboot2 spec §3.6.4).
-    // GRUB loads each `module2 /path arg...` line into physical memory
-    // somewhere it knows is free, and hands us [mod_start, mod_end) plus
-    // whatever string followed the module's path on the config line.
-    // there can be more than one of these in the tag list.
+    // tag type 3 - boot module (Multiboot2 §3.6.4). GRUB loads each
+    // `module2 /path arg...` into free RAM and hands us [mod_start, mod_end)
+    // plus the trailing string. can repeat.
     struct ModuleTag {
         u32  type;       // = 3
         u32  size;
@@ -80,10 +75,8 @@ namespace mb2 {
         return nullptr;
     }
 
-    // walk every tag in the list, calling `visitor` on each one. the visitor
-    // returns true to stop iteration early (e.g. once it's found what it
-    // wanted), false to keep going. used when a tag type can repeat (modules)
-    // or when a caller wants to filter on more than just the type field.
+    // walk every tag, calling `visitor` on each; it returns true to stop early.
+    // for repeatable tags (modules) or filtering beyond the type field.
     using TagVisitor = bool (*)(const Tag* tag);
 
     inline void for_each_tag(u64 boot_info_addr, TagVisitor visitor) {

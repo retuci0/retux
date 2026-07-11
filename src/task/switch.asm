@@ -1,29 +1,27 @@
-; low-level context switch. saves the callee-saved register set (System V
-; ABI: rbx, rbp, r12-r15, plus rflags since we also toggle IF) onto the
-; *current* stack, swaps RSP, then restores the same set from the *new*
-; stack and returns - "returning" into whatever the new stack's return
-; address points at.
+; low-level context switch. saves callee-saved regs (rbx, rbp, r12-r15, +
+; rflags since we toggle IF) on the current stack, swaps RSP, restores them
+; from the new stack, and rets into whatever return address sits there - the
+; last switch_to() call site for a resuming task, or the task_trampoline frame
+; task::create() planted for a brand-new one.
 ;
-; for a task that's run before, that's wherever it called switch_to() from
-; last time (this function itself, resuming right after its own call site).
-; for a brand new task, `task::create()` planted a fake frame shaped exactly
-; like the one this function would have pushed, with a return address of
-; `task_trampoline` - so the first switch into it "returns" straight there.
+; void switch_to(u64* old_rsp_out, u64 new_rsp, u8* old_fpu, u8* new_fpu);
+;   rdi = where to save the outgoing RSP
+;   rsi = the incoming RSP to switch to
+;   rdx/rcx = outgoing/incoming 16-aligned FXSAVE areas (Task::fpu_state)
 ;
-; void switch_to(u64* old_rsp_out, u64 new_rsp);
-;   rdi = pointer to where the outgoing task's RSP should be saved
-;   rsi = the incoming task's saved RSP to switch to
-;
-; deliberately does NOT save/restore general-purpose caller-saved registers,
-; segment registers, or FPU/SSE state - the kernel is built
-; `-mgeneral-regs-only` with no SSE, and every task here runs in ring 0 with
-; the same segment selectors, so there's nothing there to switch.
+; FXSAVE state can't be skipped like GP regs: ring-3 (musl) uses SSE2 and
+; several ring-3 tasks are schedulable at once (kernel code never touches XMM,
+; so it's free for kernel-only tasks). fxrstor sits before ret so it applies
+; to both a resume and a first run - task::create() seeds fpu_state from
+; fpu::default_state(), so it's never garbage.
 
 bits 64
 section .text
 
 global switch_to
 switch_to:
+    fxsave [rdx]
+
     pushfq
     push rbp
     push rbx
@@ -43,5 +41,6 @@ switch_to:
     pop rbp
     popfq
 
-    ret                  ; pops the return address planted by task::create()
-                         ; (or left there by this function's own `call`) and jumps to it
+    fxrstor [rcx]
+
+    ret                  ; into task_trampoline (new task) or the last call site (resume)

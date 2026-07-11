@@ -64,6 +64,10 @@ namespace vfs {
     // lifetime of the mount. returns nullptr if it's not a valid archive.
     SuperBlock* mount_initrd(const u8* base, u64 size);
 
+    // mount `sb` at a fixed prefix (e.g. "/proc"); open() checks this small
+    // table before root_sb. no unmounting, no nested prefixes.
+    void mount_at(const char* prefix, SuperBlock* sb);
+
     // open a file by absolute path. returns File* or nullptr.
     File* open(const char* path);
 

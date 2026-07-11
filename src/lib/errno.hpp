@@ -9,14 +9,17 @@
 
 namespace err {
 
-    constexpr i64 ENOENT = 2;
-    constexpr i64 EIO    = 5;
-    constexpr i64 EBADF  = 9;
-    constexpr i64 ENOMEM = 12;
-    constexpr i64 EINVAL = 22;
-    constexpr i64 ENOTTY = 25;
-    constexpr i64 ENODEV = 19;
-    constexpr i64 EMFILE = 24;
-    constexpr i64 ENOSYS = 38;
+    constexpr i64 ENOENT  = 2;
+    constexpr i64 E2BIG   = 7;
+    constexpr i64 ENOEXEC = 8;
+    constexpr i64 EBADF   = 9;
+    constexpr i64 ECHILD  = 10;
+    constexpr i64 EIO     = 5;
+    constexpr i64 ENOMEM  = 12;
+    constexpr i64 EINVAL  = 22;
+    constexpr i64 ENODEV  = 19;
+    constexpr i64 ENOTTY  = 25;
+    constexpr i64 EMFILE  = 24;
+    constexpr i64 ENOSYS  = 38;
 
 }

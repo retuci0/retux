@@ -21,18 +21,16 @@ struct TSS64 {
     u16 iopb;      // I/O permission bitmap offset (set past end to disable)
 } __attribute__((packed));
 
-// dedicated stack for double faults (#DF, vector 8).
-// without this, a fault that corrupts RSP before firing (stack overflow, null
-// write near the stack) would triple-fault instantly instead of giving you a
-// register dump. with IST, the CPU unconditionally switches to this stack
-// regardless of what RSP looked like at the time of the fault.
+// dedicated #DF (vector 8) stack. IST switches to it unconditionally, so a
+// fault that corrupted RSP (stack overflow, null write) still gets a register
+// dump instead of an instant triple-fault.
 alignas(16) static u8 df_stack[8192];
 
-// The TSS instance (statically allocated)
+// the TSS instance
 static TSS64 tss_;
 
-// gdt64_tss_slot is the 16-byte placeholder in the GDT defined in boot.asm.
-// we write the real TSS descriptor into it at runtime once we know the address of `tss_` above.
+// the 16-byte placeholder in boot.asm's GDT; we write the real TSS descriptor
+// into it at runtime once tss_'s address is known.
 extern "C" u64 gdt64_tss_slot[2];
 
 namespace {
@@ -70,28 +68,21 @@ namespace {
 namespace tss {
 
     void init() {
-        // IST entries hold the TOP of the stack (high address), not the base
-        // ist[0] corresponds to IST1 in IDT gate descriptors (IST values
-        // in the IDT are 1-indexed; 0 means "don't use IST").
+        // IST holds the TOP of the stack. ist[0] is IST1 (IDT IST values are
+        // 1-indexed; 0 = don't use IST).
         tss_.ist[0] = reinterpret_cast<u64>(df_stack + sizeof(df_stack));
 
-        // setting iopb past the end of the TSS tells the CPU there is no
-        // I/O permission bitmap - all port I/O from ring 3 will fault (which does
-        // not exist yet but who cares)
+        // iopb past the end of the TSS = no I/O bitmap, so ring-3 port I/O faults.
         tss_.iopb = sizeof(TSS64);
 
-        // write the descriptor into the GDT's TSS slot.
-        // any exception routed to an IST slot will switch to the
-        // corresponding stack before pushing its frame.
         write_tss_descriptor(
             reinterpret_cast<u64>(&tss_),
             sizeof(TSS64) - 1
         );
 
-        // set up RSP0/1/2 with initial stack pointers. they'll be used for ring transition.
-        tss_.rsp[0] = reinterpret_cast<uint64_t>(df_stack + sizeof(df_stack));  // RSP0 for kernel ring (0)
-        tss_.rsp[1] = 0;  // RSP1 not used
-        tss_.rsp[2] = 0;  // RSP2 not used
+        tss_.rsp[0] = reinterpret_cast<uint64_t>(df_stack + sizeof(df_stack));  // ring-0 entry stack
+        tss_.rsp[1] = 0;  // unused
+        tss_.rsp[2] = 0;  // unused
 
         asm volatile("ltr %%ax" : : "a"(TSS_SELECTOR));
     }

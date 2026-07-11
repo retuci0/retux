@@ -29,17 +29,13 @@ namespace irq {
     // call after idt::init() (needs idt::install_gate()) and before sti.
     void init();
 
-    // register a handler for legacy ISA IRQ `n` (0-15). only one handler
-    // per line - registering again replaces the previous one. remember to
-    // also call `apic::set_irq_mask(n, false)` once you've registered it,
-    // since init_ioapic() starts every line masked.
+    // register a handler for legacy ISA IRQ `n` (0-15), replacing any prior
+    // one. also call apic::set_irq_mask(n, false) - lines start masked.
     void register_handler(u8 n, Handler handler);
 
-    // optional hook run at the very end of every IRQ dispatch, right after
-    // `apic::eoi()`. exists so subsystems that need to act on interrupts
-    // but must never delay sending EOI (e.g. the scheduler deciding
-    // whether to preempt) can do so safely - by the time this runs, the
-    // local APIC has already been told it's free to deliver the next one.
+    // optional hook run at the end of every IRQ dispatch, after apic::eoi() -
+    // for work that must act on interrupts but never delay EOI (e.g. the
+    // scheduler deciding whether to preempt).
     // only one hook at a time; pass nullptr to clear it.
     using PostEoiHook = void (*)();
     void set_post_eoi_hook(PostEoiHook hook);

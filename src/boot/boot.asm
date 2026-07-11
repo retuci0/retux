@@ -35,11 +35,9 @@ p2_table:     resb 4096      ; for 0-1 GiB
 p2_table2:    resb 4096      ; for 1-2 GiB
 p2_table3:    resb 4096      ; for 2-3 GiB
 p2_table4:    resb 4096      ; for 3-4 GiB
-; second PDPT for the "physmap" - the SAME 4 PDs above, reachable through a
-; second PML4 slot (see set_up_page_tables below). lets the kernel turn any
-; physical address into a valid pointer (`vmm::phys_to_virt`) regardless of
-; which CR3 is currently loaded - load-bearing once per-task page tables
-; exist and stop sharing the low identity map wholesale (mem/vmm.cpp).
+; second PDPT for the physmap - the same 4 PDs above via a second PML4 slot,
+; so any physical address is reachable through a fixed high-half window
+; (vmm::phys_to_virt) regardless of the active CR3.
 p3_table_physmap: resb 4096
 stack_bottom: resb 16384
 stack_top:
@@ -143,12 +141,9 @@ set_up_page_tables:
     or eax, 0b11
     mov [p3_table + 24], eax
 
-    ; physmap: a SECOND PDPT pointing at the exact same 4 PDs above, reached
-    ; through PML4 index 384 (virtual base 0xFFFF'C000'0000'0000 - see
-    ; mem/vmm.cpp's PHYSMAP_BASE) instead of PML4 index 0. no new physical
-    ; frames - just a second path to the identical PD/2MB-huge-page entries,
-    ; so the same physical range is reachable both via the low identity map
-    ; AND via this fixed high-half window.
+    ; physmap: a second PDPT at the same 4 PDs, installed at PML4[384]
+    ; (0xFFFF'C000'0000'0000, vmm.cpp's PHYSMAP_BASE) - no new frames, just a
+    ; second path to the same huge pages.
     mov eax, p2_table
     or eax, 0b11
     mov [p3_table_physmap], eax
@@ -217,24 +212,18 @@ enable_paging:
     or eax, 1 << 5
     mov cr4, eax
 
-    ; enable SSE. the kernel's own code never emits SSE instructions (built
-    ; with -mgeneral-regs-only) so this is purely for ring-3: SSE2 is part
-    ; of the mandatory x86-64 SysV ABI baseline, and any real compiler
-    ; output - not just hand-picked "SSE-free" code - assumes it's on. musl's
-    ; own startup path (`__set_thread_area`) uses `movq %rbx,%xmm0`
-    ; unconditionally, so without this every real ELF binary #UDs before
-    ; main() is ever reached.
+    ; enable SSE - purely for ring 3 (the kernel is -mgeneral-regs-only). SSE2
+    ; is the x86-64 SysV baseline, so real ELF binaries (musl's startup uses
+    ; movq %rbx,%xmm0) #UD before main() without it.
     ;
-    ; CR0: clear EM (bit 2, "no x87/SSE, #UD instead") and set MP (bit 1,
-    ; "WAIT/FWAIT obey TS") - the standard pairing for enabling FP/SSE.
+    ; CR0: clear EM (bit 2), set MP (bit 1) - the standard FP/SSE pairing.
     mov eax, cr0
     and eax, ~(1 << 2)
     or  eax, 1 << 1
     mov cr0, eax
 
-    ; CR4: OSFXSR (bit 9, FXSAVE/FXRSTOR + actually allows SSE) and
-    ; OSXMMEXCPT (bit 10, unmasked SIMD FP exceptions land as #XM/19
-    ; instead of silently corrupting state).
+    ; CR4: OSFXSR (bit 9, enables SSE + FXSAVE) and OSXMMEXCPT (bit 10, SIMD FP
+    ; exceptions as #XM instead of silent corruption).
     mov eax, cr4
     or eax, (1 << 9) | (1 << 10)
     mov cr4, eax

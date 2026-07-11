@@ -99,15 +99,36 @@ namespace vfs {
 
     namespace {
 
-        // vfs::ReadBlock is a plain function pointer with no context slot, but
-        // reading a partition needs to know which raw_read to use and where the
-        // partition starts. stash that here and hand ext2 a small adapter that
-        // closes over it via partition::read_partition(). only one filesystem
-        // is ever mounted at a time (root_sb), so a single static context is fine.
+        // ReadBlock has no context slot, but reading a partition needs the
+        // raw_read + start LBA. stash them here for the read_partition adapter;
+        // one filesystem mounts at a time, so a single static context is fine.
         partition::PartitionReadContext s_part_ctx;
 
         bool partition_relative_read(u64 lba, u32 count, void* buf) {
             return partition::read_partition(lba, count, buf, &s_part_ctx);
+        }
+
+        struct MountEntry { const char* prefix; SuperBlock* sb; };
+        constexpr int MAX_MOUNTS = 4;
+        MountEntry s_mounts[MAX_MOUNTS];
+        int s_num_mounts = 0;
+
+        // pick the (SuperBlock*, path-relative-to-mount) open() resolves
+        // against: first matching prefix in s_mounts, else root_sb unchanged.
+        // the prefix must end at a '/' or end-of-string, so "/proc" matches
+        // "/proc/uptime" but not "/proclaim".
+        void resolve_mount(const char* path, SuperBlock** out_sb, const char** out_rel) {
+            for (int i = 0; i < s_num_mounts; ++i) {
+                size_t plen = string::strlen(s_mounts[i].prefix);
+                if (string::strncmp(path, s_mounts[i].prefix, plen) == 0 &&
+                    (path[plen] == '/' || path[plen] == '\0')) {
+                    *out_sb  = s_mounts[i].sb;
+                    *out_rel = path + plen;
+                    return;
+                }
+            }
+            *out_sb  = root_sb;
+            *out_rel = path;
         }
 
     }
@@ -122,12 +143,20 @@ namespace vfs {
         return tarfs::mount(base, size);
     }
 
+    void mount_at(const char* prefix, SuperBlock* sb) {
+        if (s_num_mounts < MAX_MOUNTS) s_mounts[s_num_mounts++] = {prefix, sb};
+    }
+
     File* open(const char* path) {
-        if (!root_sb || !root_sb->ops || !root_sb->ops->root_inode) return nullptr;
-        Inode* root = root_sb->ops->root_inode(root_sb);
+        SuperBlock* sb;
+        const char* rel;
+        resolve_mount(path, &sb, &rel);
+
+        if (!sb || !sb->ops || !sb->ops->root_inode) return nullptr;
+        Inode* root = sb->ops->root_inode(sb);
         if (!root) return nullptr;
 
-        Inode* target = lookup_path(root, path);
+        Inode* target = lookup_path(root, rel);
         if (!target) return nullptr;
 
         // create a file object

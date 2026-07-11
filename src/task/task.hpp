@@ -5,13 +5,9 @@
 #include "lib/types.hpp"
 
 
-// task control block + task creation. this is deliberately dumb: every task,
-// kernel or ring-3, shares the single set of page tables set up by
-// `vmm::remap_kernel()` - there's no per-task CR3 yet, so `task::user`
-// hand-maps ring-3 code/stack pages into that same shared address space
-// (see `task/user.cpp`, `task/elf.cpp`) rather than switching into an
-// isolated one. real process isolation is later work that would extend
-// `Task` with a CR3 and give `sched::spawn()` an address-space argument.
+// task control block + creation. kernel-only tasks share whatever CR3 is
+// active; a Linux-ABI task gets its own via the `cr3` field (see
+// vmm::create_address_space(), task/user.cpp).
 
 namespace task {
 
@@ -24,19 +20,16 @@ namespace task {
     };
 
     struct Task {
-        // saved stack pointer. only meaningful while this task is NOT the
-        // one currently running - `switch_to()` writes/reads it directly.
+        // saved stack pointer, read/written by switch_to() - only meaningful
+        // while this task isn't running.
         u64 rsp;
 
-        u64 stack_base;  // base of the kmalloc'd stack, for freeing on exit
+        u64 stack_base;  // base of the kmalloc'd stack, freed on exit
         u64 stack_size;
 
-        // stack_base + stack_size, rounded down to 16-byte alignment - the
-        // value the scheduler writes into `cpu_local.kernel_rsp` when this
-        // task is picked, so that any subsequent SYSCALL from userspace
-        // lands on THIS task's kernel stack rather than whoever ran last.
-        // 0 for the boot task (see `sched::init()`), which has no
-        // kmalloc'd stack and never itself takes syscalls.
+        // top of the kernel stack (16-aligned), loaded into cpu_local.kernel_rsp
+        // + TSS.RSP0 when picked so a SYSCALL/IRQ lands on THIS task's stack.
+        // 0 for the boot task (no kmalloc'd stack, never takes syscalls).
         u64 kernel_stack_top;
 
         u64   id;
@@ -46,56 +39,49 @@ namespace task {
         void*   arg;
 
         // --- Linux-ABI process state (task/user.cpp, cpu/syscall.cpp) ---
-        // all zeroed by `task::create()` below - NOT via default member
-        // initializers, since every Task is `kmalloc`'d + cast rather than
-        // constructed, so those would never actually run.
+        // all zeroed by task::create(), not default member initializers - Task
+        // is kmalloc'd + cast, never constructed, so those wouldn't run.
 
-        u64 fs_base;     // TLS pointer, set via arch_prctl(ARCH_SET_FS) -
-                         // restored into IA32_FS_BASE on every switch INTO
-                         // this task (see `sched.cpp`'s `schedule()`) so a
-                         // task's TLS doesn't leak into the next one.
+        u64 fs_base;     // TLS pointer (arch_prctl ARCH_SET_FS), restored into
+                         // IA32_FS_BASE on every switch in so it doesn't leak.
 
-        u64 cr3;         // physical address of this task's own PML4 (see
-                         // `vmm::create_address_space()`), loaded on every
-                         // switch INTO this task - 0 for kernel-only tasks
-                         // (boot/idle/kbdecho), which share whatever CR3 was
-                         // already active rather than owning one (same
-                         // "doesn't apply to this task" convention as
-                         // `kernel_stack_top == 0`).
+        u64 cr3;         // this task's own PML4, loaded on switch in; 0 for
+                         // kernel-only tasks (share the active CR3).
 
-        u64 brk_start;  // user `brk` region: [brk_start, brk_cur), grown
-        u64 brk_cur;    // page-at-a-time by `sys_brk`. brk_start is fixed at
-                        // ELF-load time (just past the last PT_LOAD).
+        u64 brk_start;  // brk region [brk_start, brk_cur), grown by sys_brk.
+        u64 brk_cur;    // brk_start fixed at ELF load (past the last PT_LOAD).
 
-        u64 mmap_next;  // bump pointer for anonymous mmap - separate region
-                        // from brk so the two never collide.
+        u64 mmap_next;  // anonymous-mmap bump pointer, separate from brk.
+
+        // per-task FXSAVE area (512 bytes, 16-aligned for fxsave/fxrstor).
+        // fpu_raw is the kmalloc'd block (for kfree); fpu_state is it rounded
+        // up to 16. seeded from fpu::default_state() - an all-zero image
+        // unmasks every FP exception and would fault on first use.
+        u8* fpu_raw;
+        u8* fpu_state;
+
+        // set by sys_fork(), null otherwise. exit_current() auto-reaps a dead
+        // task only when parent == nullptr; a parented one lingers for
+        // sys_wait4, which collects exit_code.
+        Task* parent;
+        u64   exit_code;
 
         static constexpr u32 MAX_FDS = 16;
-        vfs::File* fds[MAX_FDS];  // fd 0/1/2 are special-cased (tty/serial)
-                                  // in the syscall handlers, not backed by
-                                  // a real vfs::File.
+        vfs::File* fds[MAX_FDS];  // fd 0/1/2 special-cased (tty/serial), no File
 
-        // intrusive singly-linked circular ready queue - see `sched.cpp`.
-        Task* next;
+        Task* next;  // intrusive circular ready queue - see sched.cpp
 
         char name[16];
     };
 
-    // allocate a task and its kernel stack, and lay out a fake initial
-    // `switch_to()` frame on it so that switching into it for the first
-    // time behaves exactly like resuming a task that yielded normally -
-    // it "returns" straight into `task_trampoline`, which calls `entry(arg)`
-    // and then `sched::exit_current()` once it returns.
+    // allocate a task + kernel stack with a fake initial switch_to() frame, so
+    // its first switch-in "returns" into task_trampoline (which calls
+    // entry(arg), then exit_current()). does NOT add it to the ready queue -
+    // use sched::spawn() (this is standalone only for testing).
     //
-    // does NOT add the task to the scheduler's ready queue - use
-    // `sched::spawn()` for that (this only exists standalone for testing).
-    //
-    // `cr3` (default 0, "no private address space") is set on the Task
-    // struct atomically as part of construction, not by the caller
-    // afterward - a task is spliced into the ready queue as soon as
-    // `sched::spawn()` returns, and a timer interrupt could preempt into it
-    // before a separate "now set its cr3" step ever ran, briefly running it
-    // with no address space of its own. see `vmm::create_address_space()`.
+    // cr3 is set during construction, not afterward: spawn() splices the task
+    // into the ring immediately, and a timer could preempt into it before a
+    // separate "set cr3" step, briefly running it with no address space.
     Task* create(const char* name, EntryFn entry, void* arg,
                  u64 stack_size = 16 * 1024, u64 cr3 = 0);
 

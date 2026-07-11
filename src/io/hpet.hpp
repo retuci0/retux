@@ -3,11 +3,9 @@
 #include "lib/types.hpp"
 
 
-// High Precision Event Timer, driven through the "legacy replacement"
-// route so it lands on IRQ0 - the exact same I/O APIC pin the PIT would
-// use.
-// requires acpi::init() to have found an ACPI "HPET" table with legacy
-// replacement support (LEG_RT_CAP)
+// High Precision Event Timer, routed via "legacy replacement" so it lands on
+// IRQ0 (the same pin the PIT uses). requires acpi::init() to have found an
+// HPET table with LEG_RT_CAP.
 
 namespace hpet {
 

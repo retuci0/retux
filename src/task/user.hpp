@@ -2,6 +2,8 @@
 
 #include "task/task.hpp"
 
+#include "cpu/syscall.hpp"
+
 #include "lib/types.hpp"
 
 
@@ -9,31 +11,34 @@
 
 namespace task::user {
 
-    // allocate a fresh USER page for code + a USER page for a stack,
-    // copy the embedded ring-3 payload from `user_test.asm` into the
-    // code page, and spawn a task whose entry function `iretq`s into it.
-    // safe to call any time after `sched::init()` + `syscall::init()`.
+    // spawn a task that iretqs into the user_test.asm payload (copied into a
+    // fresh USER code page, with a USER stack). call after sched/syscall init.
     void spawn_test();
 
-    // give the new task its own private address space (`vmm::create_address_
-    // space()`) and spawn it with an entry function that loads the ELF
-    // executable at `path` (via `elf::load()`), maps a multi-page user
-    // stack, builds a Linux-ABI `[argc][argv][envp][auxv]` block on it
-    // (argv[0] = `path`, no environment yet), sets up `brk`/`mmap` regions,
-    // and `iretq`s into the binary's entry point - i.e. this targets real
-    // static/non-PIE Linux binaries (musl), not just hand-built test blobs.
-    // safe to spawn more than one of these concurrently - each gets its own
-    // page tables, so identical fixed virtual addresses (code at `0x400000`,
-    // etc.) across tasks don't collide.
+    // spawn a task in its own address space that loads a static/non-PIE Linux
+    // (musl) ELF at `path`, builds its initial stack, and drops into ring 3.
+    // safe to run several concurrently - each has its own page tables, so the
+    // shared fixed addresses (code at 0x400000) don't collide.
     //
-    // unlike the previous version of this function, ELF loading now happens
-    // LAZILY inside the task's own entry function (same reason
-    // `spawn_test()` already does its setup lazily: every mapping has to
-    // happen while the task's own CR3 is actually active, which is only
-    // true once the scheduler has switched into it) - so a bad path or
-    // corrupt ELF is no longer caught synchronously here. this returns
-    // nullptr only on allocation failure (OOM); an ELF that fails to load
-    // logs to serial and the task exits immediately instead.
+    // ELF loading happens lazily in the task's entry fn (mappings must land
+    // under the task's own CR3), so a bad path isn't caught here: returns null
+    // only on OOM; a failed load just logs and exits the task.
     task::Task* spawn_from_elf(const char* path);
+
+    // fork(): clone the caller into a new task - private copy of the address
+    // space (clone_address_space), shallow copy of fds[], same brk/mmap/TLS.
+    // `f` is the caller's syscall frame; the child resumes as if returning from
+    // the same syscall via fork_enter_ring3 (task/fork_entry.asm), not the
+    // normal dispatch path.
+    //
+    // returns the child pid to the parent, or -errno; the child never sees
+    // this - its rax=0 is forced by fork_enter_ring3.
+    i64 sys_fork(const syscall::Frame* f);
+
+    // execve(path, argv, envp): replaces the caller's image in place (full
+    // contract in task/user.cpp). trusted USER pointers, copied into the kernel
+    // before the address space changes. returns -errno on failure (caller runs
+    // on, unchanged); doesn't return on success.
+    i64 sys_execve(const char* path, char* const* argv, char* const* envp);
 
 }

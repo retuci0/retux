@@ -7,47 +7,66 @@
 
 // round-robin preemptive scheduler on top of `task::`.
 //
-// tasks live on a single intrusive circular linked list (`Task::next`) that
-// always contains at least the bootstrap task ("boot" - whichever context
-// called `sched::init()`, normally `kernel_main`) and a dedicated idle task.
-// preemption is driven by whichever timer driver is active (`pit`/`hpet`)
-// calling `sched::tick()` on every tick via `set_tick_callback()`, and the
-// actual switch happens from `irq::set_post_eoi_hook()` - AFTER EOI has
-// already been sent, so a task that ends up suspended mid-timeslice never
-// blocks the next interrupt on that vector.
+// tasks live on one intrusive circular list (Task::next), always holding at
+// least the "boot" task (whatever called sched::init(), normally kernel_main)
+// and an idle task. the active timer driver calls tick() every tick; the
+// actual switch happens from irq::set_post_eoi_hook() AFTER EOI, so a task
+// suspended mid-timeslice never blocks the next interrupt.
 
 namespace sched {
 
-    // must be called once, after heap + irq are ready, from the context
-    // that should become the "boot" task (normally `kernel_main`, right
-    // before it does anything it wants preemptible). also spawns a dedicated
-    // idle task (halts when nothing else is ready).
+    // call once, after heap + irq are ready, from the context that becomes the
+    // "boot" task. also spawns the idle task.
     void init();
 
-    // create a new task and add it to the ready queue, right after the
-    // currently running one. `cr3` - see `task::create()` - defaults to 0
-    // ("no private address space", shares whatever's active).
+    // create a task and splice it into the ring after the current one. cr3
+    // defaults to 0 (no private address space) - see task::create().
     task::Task* spawn(const char* name, task::EntryFn entry, void* arg,
                        u64 stack_size = 16 * 1024, u64 cr3 = 0);
 
-    // voluntarily give up the remainder of the current timeslice.
+    // give up the rest of the current timeslice.
     void yield();
 
-    // called from the active timer driver's IRQ handler (via
-    // `pit::set_tick_callback` / `hpet::set_tick_callback`) once per tick.
-    // only decrements the timeslice counter and sets a flag - does NOT
-    // itself switch stacks, since it runs before EOI has been sent.
+    // yield() from a blocking SYSCALL handler, which hasn't reached its paired
+    // swapgs-exit yet. ordinary syscalls pair entry+exit swapgs before anything
+    // else runs; blocking breaks that - the next task's own syscall_entry
+    // swapgs would pick up our leftover KernelGSBase instead of &g_cpu_local,
+    // and its [gs:...] accesses would resolve against garbage. so this pins
+    // both swapgs slots to &g_cpu_local (wrmsr) around the yield.
+    //
+    // does NOT save/restore cpu::CpuLocal::user_rsp, which has the same
+    // clobbered-by-nested-syscall problem: a caller that loops must save it
+    // before the first call and restore after the last (see wait4).
+    void yield_blocking();
+
+    // called once per tick from the active timer's IRQ handler. only bumps the
+    // timeslice counter + flag; does NOT switch (runs before EOI).
     void tick();
 
-    // called from `irq::set_post_eoi_hook()` after every IRQ, once EOI has
-    // already been sent. actually performs the switch if `tick()` flagged
-    // that the current task's timeslice ran out.
+    // called from irq::set_post_eoi_hook() after EOI. does the switch if tick()
+    // flagged the timeslice as expired.
     void maybe_reschedule();
 
-    // marks the current task dead and switches away from it permanently.
-    // its stack is reclaimed (via `heap::kfree`) the next time `schedule()`
-    // runs on a *different* stack - never while still executing on it.
+    // mark the current task dead and switch away for good. an unparented task
+    // is auto-reaped on a later schedule() running on a different stack; a
+    // parented (forked) one stays Dead on the ring until wait4() collects it.
+    // Task::exit_code should already be set (see sys_exit).
     [[noreturn]] void exit_current();
+
+    // task with the given id anywhere on the ring (any state), or null. ids
+    // are monotonic and never reused, so no ABA hazard.
+    task::Task* find_task(u64 id);
+
+    // wait for a specific child (by pid) to exit, reap it, return its pid, or
+    // -ECHILD if pid isn't a live child. writes a Linux wait status to *status
+    // if non-null (4-byte int, not 8 - a u64 would overflow the caller): low
+    // byte 0, exit code in bits 8-15. busy-yield()s (never a bare spin - IF is
+    // clear all syscall, so only switch_to lets the child run). one specific
+    // pid only - no -1, no WNOHANG.
+    //
+    // limitation: a child whose parent exits first becomes a permanent zombie
+    // (no orphan re-parenting). retsh's fork-then-wait never hits this.
+    i64 wait4(i64 pid, u32* status);
 
     // the task currently executing.
     task::Task* current_task();

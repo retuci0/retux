@@ -30,11 +30,9 @@ namespace apic {
     // (un)mask a single legacy ISA IRQ line (0-15) at the I/O APIC.
     void set_irq_mask(u8 irq, bool masked);
 
-    // arms the local APIC's own timer for a single one-shot interrupt on
-    // `vector`, firing after roughly `count` ticks (divide-by-16). exists
-    // purely as a self-test: the LAPIC timer is delivered directly by the
-    // local APIC, so it proves init_lapic()+irq::init()+eoi() all work
-    // without depending on the I/O APIC or any real device being present.
+    // one-shot LAPIC timer interrupt on `vector` after ~count ticks
+    // (divide-by-16). a self-test for init_lapic()+irq::init()+eoi() with no
+    // I/O APIC or device needed.
     void start_test_timer(u8 vector, u32 count);
 
 }

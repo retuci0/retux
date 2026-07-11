@@ -3,62 +3,74 @@
 
 #include "cpu/cpu.hpp"
 #include "cpu/tss.hpp"
+#include "cpu/fpu.hpp"
 
 #include "mem/heap.hpp"
+#include "mem/vmm.hpp"
 
 #include "lib/types.hpp"
+#include "lib/string.hpp"
+#include "lib/errno.hpp"
 
 #include "io/serial.hpp"
 
 
-// defined in `switch.asm`. saves the callee-saved register set + rflags
-// onto the outgoing stack, writes the resulting RSP to `*old_rsp_out`,
-// switches RSP to `new_rsp`, and restores the same register set from there.
-extern "C" void switch_to(u64* old_rsp_out, u64 new_rsp);
+// defined in switch.asm. saves callee-saved regs + rflags + FXSAVE (into
+// old_fpu) on the outgoing stack, stashes RSP through old_rsp_out, swaps to
+// new_rsp and restores the same from new_fpu. handles both a resume and a new
+// task's first run (fxrstor sits right before the ret).
+extern "C" void switch_to(u64* old_rsp_out, u64 new_rsp, u8* old_fpu, u8* new_fpu);
 
 using task::State;
 using task::Task;
 
 namespace {
 
-    // how many ticks each task gets before being preempted. at the
-    // kernel's default 1000 Hz tick rate that's a 20ms timeslice.
+    // ticks per task before preemption. 20ms at the default 1000 Hz.
     constexpr u32 TIMESLICE_TICKS = 20;
 
     Task* current_   = nullptr;
     Task* idle_task_ = nullptr;
 
-    // set by `exit_current()` right before the final switch away from a
-    // dying task - reclaimed on the next `schedule()` call that runs on a
-    // *different* stack, since freeing it any earlier would pull the rug
-    // out from under whatever's still executing on it.
+    // set by exit_current() before the final switch away from a dying task;
+    // reaped on a later schedule() running on a *different* stack (freeing it
+    // sooner would pull the rug from under the stack still executing).
     Task* zombie_ = nullptr;
 
     volatile u32  ticks_left_   = TIMESLICE_TICKS;
     volatile bool need_resched_ = false;
 
+    // unlink t from the ring. t must not be current_ (can't unlink the stack
+    // we're on); both call sites guarantee that.
+    void unlink_from_ring(Task* t) {
+        Task* prev = current_;
+        while (prev->next != t) prev = prev->next;
+        prev->next = t->next;
+    }
+
+    // frees everything a dead task owns: address space, kernel stack, FXSAVE
+    // area, Task struct. caller must have unlinked t and must not be running
+    // on t's stack/CR3 - reaping only happens once something else is current_.
+    void free_task(Task* t) {
+        if (t->cr3 != 0) vmm::destroy_address_space(t->cr3);
+        heap::kfree(reinterpret_cast<void*>(t->stack_base));
+        heap::kfree(t->fpu_raw);
+        heap::kfree(t);
+    }
+
     void reap_zombie() {
         if (!zombie_) return;
-        // `exit_current()` sets `zombie_ = current_` *before* switching away
-        // from it - if `schedule()` is being called from that same task
-        // (which it always is, right after), `zombie_ == current_` still,
-        // and we must not free the stack we're actively executing on. it'll
-        // get reaped on some later `schedule()` call once `current_` has
-        // moved on to something else.
+        // exit_current() sets zombie_ = current_ before switching away, so the
+        // immediately-following schedule() still sees zombie_ == current_ -
+        // don't free the stack we're on. a later schedule() reaps it.
         if (zombie_ == current_) return;
 
-        Task* prev = current_;
-        while (prev->next != zombie_) prev = prev->next;
-        prev->next = zombie_->next;
-
-        heap::kfree(reinterpret_cast<void*>(zombie_->stack_base));
-        heap::kfree(zombie_);
+        unlink_from_ring(zombie_);
+        free_task(zombie_);
         zombie_ = nullptr;
     }
 
-    // first `Ready` task strictly after `from`, walking the circular list.
-    // returns nullptr if there isn't one (i.e. `from` is the only runnable
-    // task on the ring).
+    // first Ready task strictly after `from` on the ring, or null if none.
     Task* next_ready_after(Task* from) {
         Task* t = from->next;
         while (t != from) {
@@ -74,10 +86,8 @@ namespace {
         }
     }
 
-    // does the actual work of picking a task and (maybe) switching to it.
-    // safe to call from both `yield()` (voluntary, arbitrary C++ context)
-    // and `maybe_reschedule()` (involuntary, from post-EOI IRQ context) -
-    // both are "normal" kernel-stack contexts as far as `switch_to` cares.
+    // pick a task and (maybe) switch to it. safe from both yield() (voluntary)
+    // and maybe_reschedule() (post-EOI IRQ) - both normal kernel-stack contexts.
     void schedule() {
         reap_zombie();
 
@@ -100,56 +110,35 @@ namespace {
         next->state = State::Running;
         current_ = next;
 
-        // point the per-CPU syscall-entry stack at the incoming task's
-        // kernel stack top - so a SYSCALL from userspace (whenever this
-        // task eventually SYSRETs out and comes back) lands on THIS task's
-        // stack rather than whichever one happened to run last.
-        // 0 = "no kernel stack" (boot task) - leave the field alone,
-        // since it won't ever take a syscall to notice.
+        // point SYSCALL's entry stack (cpu_local) and the IDT's non-IST gate
+        // stack (TSS.RSP0) at the incoming task's kernel stack. both matter:
+        // SYSCALL uses cpu_local, a hardware IRQ landing in ring 3 uses RSP0.
+        // leaving RSP0 unsynced would land an interrupt on the wrong task's
+        // stack and corrupt its saved rsp. 0 = boot task, no kernel stack.
         if (next->kernel_stack_top != 0) {
             cpu::local()->kernel_rsp = next->kernel_stack_top;
-
-            // same idea, for the OTHER way ring-3 code re-enters ring 0: a
-            // hardware IRQ (e.g. the timer) landing while this task is
-            // executing in ring 3 goes through the IDT's normal (non-IST)
-            // gate mechanism, which loads its stack from the TSS's RSP0 -
-            // NOT from cpu_local. left unsynced, any interrupt arriving
-            // mid-ring-3 for this task would land on whatever task's stack
-            // RSP0 last pointed at, corrupting that task's saved rsp the
-            // moment schedule() (called from the IRQ's post-EOI hook) saves
-            // the "current" rsp into the wrong Task.
             tss::set_kernel_stack(next->kernel_stack_top);
         }
 
-        // restore the incoming task's TLS pointer (set via
-        // arch_prctl(ARCH_SET_FS, ...) - cpu/syscall.cpp) so it doesn't
-        // inherit whatever the previously-running task last set FS_BASE to.
-        // a no-op for kernel-only tasks, which never touch fs_base (stays 0).
+        // restore the incoming task's TLS (arch_prctl ARCH_SET_FS). no-op for
+        // kernel-only tasks (fs_base stays 0).
         cpu::wrmsr(cpu::IA32_FS_BASE, next->fs_base);
 
-        // load the incoming task's own address space, if it has one (see
-        // `vmm::create_address_space()`). 0 = "no private address space"
-        // (every kernel-only task) - deliberately leave CR3 alone rather
-        // than switching to anything, since those tasks only ever touch
-        // globally-shared mappings (kernel image, heap, physmap), present
-        // in every address space by construction - switching into one
-        // needlessly would just be an extra, pointless TLB flush.
+        // load the task's address space if it has one. 0 = kernel-only task -
+        // leave CR3 alone; those only touch shared mappings, so switching
+        // would just be a needless TLB flush.
         if (next->cr3 != 0) {
             asm volatile("mov %0, %%cr3" : : "r"(next->cr3) : "memory");
         }
 
-        switch_to(&old->rsp, next->rsp);
-
-        // execution resumes here once something switches back to `old` -
-        // which, by definition, is only ever reached again by re-entering
-        // this exact call site the next time `old` gets picked.
+        switch_to(&old->rsp, next->rsp, old->fpu_state, next->fpu_state);
+        // resumes here next time something switches back to `old`.
     }
 
 }
 
-// every freshly-created task (via `task::create`) "returns" here the first
-// time it's switched to, instead of into a real call site - see
-// `task::create()`'s `InitialFrame` setup.
+// where a freshly-created task "returns" on its first switch-in, instead of a
+// real call site - see task::create()'s InitialFrame setup.
 extern "C" void task_trampoline() {
     Task* self = sched::current_task();
     if (self && self->entry) {
@@ -162,10 +151,9 @@ extern "C" void task_trampoline() {
 namespace sched {
 
     void init() {
-        // wrap whatever context called `init()` (normally `kernel_main`) as
-        // the "boot" task. it has no `task::create()`-manufactured stack -
-        // its `rsp` field is only ever populated the first time something
-        // switches *away* from it, by `switch_to()` itself.
+        // wrap the calling context (kernel_main) as the "boot" task. it has no
+        // manufactured stack - its rsp is only written the first time
+        // switch_to() switches away from it.
         Task* boot = static_cast<Task*>(heap::kmalloc(sizeof(Task)));
         boot->rsp              = 0;
         boot->stack_base       = 0;  // not owned by us - never freed
@@ -180,6 +168,14 @@ namespace sched {
         boot->brk_start = 0;
         boot->brk_cur   = 0;
         boot->mmap_next = 0;
+        // boot skips task::create(), so it repeats the 16-aligned FXSAVE-area
+        // setup by hand.
+        u8* boot_fpu_raw = static_cast<u8*>(heap::kmalloc(512 + 15));
+        boot->fpu_raw   = boot_fpu_raw;
+        boot->fpu_state = reinterpret_cast<u8*>((reinterpret_cast<u64>(boot_fpu_raw) + 15) & ~15ULL);
+        string::memcpy(boot->fpu_state, fpu::default_state(), 512);
+        boot->parent    = nullptr;
+        boot->exit_code = 0;
         for (u32 i = 0; i < Task::MAX_FDS; ++i) boot->fds[i] = nullptr;
         boot->name[0] = 'b'; boot->name[1] = 'o'; boot->name[2] = 'o';
         boot->name[3] = 't'; boot->name[4] = '\0';
@@ -209,6 +205,12 @@ namespace sched {
         schedule();
     }
 
+    void yield_blocking() {
+        cpu::wrmsr(cpu::IA32_KERNEL_GS_BASE, reinterpret_cast<u64>(cpu::local()));
+        yield();
+        cpu::wrmsr(cpu::IA32_GS_BASE, reinterpret_cast<u64>(cpu::local()));
+    }
+
     void tick() {
         if (!current_) return;  // sched::init() hasn't run yet
         if (ticks_left_ > 0 && --ticks_left_ == 0) {
@@ -222,16 +224,49 @@ namespace sched {
     }
 
     [[noreturn]] void exit_current() {
-        // `schedule()` (below) reaps whatever the *previous* zombie was as
-        // its first step - no need to do it here too.
         current_->state = State::Dead;
-        zombie_ = current_;
+
+        // only unparented tasks auto-reap (schedule() reaps the previous
+        // zombie first). a parented task sits Dead on the ring for wait4() -
+        // reaping it here would use-after-free if wait4 lost a race to any
+        // other task getting scheduled first (see task.hpp's Task::parent).
+        if (current_->parent == nullptr) {
+            zombie_ = current_;
+        }
         schedule();
 
-        // schedule() switches away from a Dead current_ and never returns
-        // to a Dead task, so this is truly unreachable - but the compiler
-        // can't know that, and `[[noreturn]]` demands a trap just in case.
-        while (true) asm volatile("hlt");
+        while (true) asm volatile("hlt");  // unreachable; [[noreturn]] needs a trap
+    }
+
+    Task* find_task(u64 id) {
+        Task* t = current_;
+        do {
+            if (t->id == id) return t;
+            t = t->next;
+        } while (t != current_);
+        return nullptr;
+    }
+
+    i64 wait4(i64 pid, u32* status) {
+        Task* self = current_;
+        Task* child = find_task(static_cast<u64>(pid));
+        if (!child || child->parent != self) return -err::ECHILD;
+
+        // save/restore user_rsp around the whole blocking loop - see
+        // yield_blocking()'s doc comment for the swapgs hazard.
+        u64 saved_user_rsp = cpu::local()->user_rsp;
+        while (child->state != State::Dead) {
+            yield_blocking();
+        }
+        cpu::local()->user_rsp = saved_user_rsp;
+
+        // status = exit code in bits 8-15, low byte 0 (WIFEXITED). no signals,
+        // so never a signal-death status.
+        if (status) *status = static_cast<u32>((child->exit_code & 0xFF) << 8);
+        i64 pid_out = static_cast<i64>(child->id);
+        unlink_from_ring(child);
+        free_task(child);
+        return pid_out;
     }
 
     Task* current_task() {

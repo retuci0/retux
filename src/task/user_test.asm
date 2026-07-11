@@ -1,18 +1,9 @@
-; ring-3 test payload. embedded as bytes in the kernel image via a global
-; label pair (`user_test_start`, `user_test_end`), then `task::user::spawn`
-; copies the whole blob into a fresh `USER|PRESENT` page and drops into it.
+; ring-3 test payload, embedded between user_test_start/end and copied into a
+; fresh USER page by task::user::spawn before jumping in.
 ;
-; keep everything position-independent so the copy works: use ONLY
-; RIP-relative addressing (`[rel msg]`), and only reference labels that
-; are themselves inside the blob. RIP-relative displacements are encoded
-; as `target - next_instruction`, both of which shift by the same amount
-; when the blob is relocated, so the resulting effective address comes
-; out right at the destination.
-;
-; this file is assembled with `bits 64` and lives in `.rodata` - the CPU
-; never executes it in place; it's data to be copied and executed
-; elsewhere. that's also why the kernel's own W^X mapping of `.rodata`
-; (no-execute, per `vmm::remap_kernel`) doesn't get in the way.
+; must be position-independent (it's relocated): RIP-relative addressing only
+; ([rel msg]), and only labels inside the blob. lives in .rodata as data - the
+; CPU never executes it in place, so remap_kernel's NX on .rodata is fine.
 
 bits 64
 section .rodata
@@ -33,10 +24,8 @@ user_test_start:
     xor rdi, rdi                        ; status = 0
     syscall
 
-    ; SYS_EXIT shouldn't return, but be defensive - a HLT from ring 3
-    ; would #GP and take us to the exception handler, at which point at
-    ; least the register dump makes clear what went wrong. keep spinning
-    ; instead - safer footgun-wise.
+    ; SYS_EXIT shouldn't return; spin rather than HLT (which would #GP from
+    ; ring 3).
 .hang:
     jmp .hang
 

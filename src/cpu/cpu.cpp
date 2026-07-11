@@ -9,8 +9,6 @@ namespace {
     // one instance is enough for now - single CPU, single per-CPU area.
     cpu::CpuLocal g_cpu_local;
 
-    constexpr u32 IA32_KERNEL_GS_BASE = 0xC000'0102;
-
 }
 
 namespace cpu {

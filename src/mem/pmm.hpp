@@ -18,4 +18,8 @@ namespace pmm {
     // phys_addr must be 4KB-aligned and previously allocated.
     void free_frame(u64 phys_addr);
 
+    // frame counts, in 4KB units - for `/proc/meminfo` (fs/procfs.cpp).
+    u64 total_frame_count();
+    u64 used_frame_count();
+
 }

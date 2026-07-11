@@ -45,12 +45,15 @@ $(INITRD): $(shell find $(INITRDROOT) -type f 2>/dev/null)
 
 initrd: $(INITRD)
 
+
+ISODIR := isodir
+
 $(OUT)/kernel.iso: $(OUT)/kernel.bin $(INITRD) grub.cfg
-	mkdir -p isodir/boot/grub
-	cp $(OUT)/kernel.bin isodir/boot/kernel.bin
-	cp $(INITRD) isodir/boot/initrd.tar
-	cp grub.cfg isodir/boot/grub/grub.cfg
-	grub-mkrescue -o $(OUT)/kernel.iso isodir 2>/dev/null
+	mkdir -p $(ISODIR)/boot/grub
+	cp $(OUT)/kernel.bin $(ISODIR)/boot/kernel.bin
+	cp $(INITRD) $(ISODIR)/boot/initrd.tar
+	cp grub.cfg $(ISODIR)/boot/grub/grub.cfg
+	grub-mkrescue -o $(OUT)/kernel.iso $(ISODIR) 2>/dev/null
 
 iso: $(OUT)/kernel.iso
 
@@ -85,7 +88,7 @@ debug: $(OUT)/kernel.iso $(DISK)
 	    -d int,cpu_reset -D out/qemu.log
 
 clean:
-	rm -rf $(OUT) isodir out diskroot initrdroot
+	rm -rf $(OUT) $(INITRDROOT) $(DISKROOT) $(ISODIR)
 
 
 .PHONY: all iso disk initrd run clean

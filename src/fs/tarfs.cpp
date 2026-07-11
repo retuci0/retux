@@ -272,7 +272,21 @@ namespace tarfs {
         auto* st = reinterpret_cast<TarState*>(heap::kmalloc(sizeof(TarState)));
         if (!st) return nullptr;
 
-        st->base      = base;
+        // copy the whole archive out of the Multiboot module's memory and
+        // into the heap, rather than keeping `base` (the module's original
+        // physical/identity address) around as `st->base` - the heap is
+        // mapped into every per-task private address space
+        // (`vmm::create_address_space()` shares HEAP_PML4_IDX verbatim),
+        // but the module's own address generally is NOT: it can land
+        // inside the low window that function deliberately reserves for
+        // non-PIE user code (RESERVED_LOW..RESERVED_HIGH), in which case
+        // `tar_read()`'s memcpy would page-fault the instant any task's own
+        // private CR3 - not the boot-time one - is active.
+        auto* archive_copy = reinterpret_cast<u8*>(heap::kmalloc(size));
+        if (!archive_copy) { heap::kfree(st); return nullptr; }
+        string::memcpy(archive_copy, base, size);
+
+        st->base      = archive_copy;
         st->size      = size;
         st->nodes     = reinterpret_cast<TarNode*>(heap::kmalloc(sizeof(TarNode) * capacity));
         st->num_nodes = 0;

@@ -7,6 +7,7 @@
 #include "cpu/apic.hpp"
 #include "cpu/irq.hpp"
 #include "cpu/syscall.hpp"
+#include "cpu/fpu.hpp"
 
 #include "io/serial.hpp"
 #include "io/pit.hpp"
@@ -24,26 +25,12 @@
 #include "tty/tty.hpp"
 
 #include "fs/vfs.hpp"
+#include "fs/procfs.hpp"
 
 #include "task/sched.hpp"
 #include "task/user.hpp"
 
 
-// spawned as a task once the scheduler is up - moved out of kernel_main's
-// tail so it can be preempted like anything else instead of monopolizing
-// the CPU forever.
-static void kbdecho_task(void*) {
-    while (true) {
-        char c = keyboard::getchar();
-        if (c) {
-            tty::print(c);
-        } else {
-            // nothing to do this quantum - let someone else have it rather
-            // than busy-spinning until the timer preempts us anyway.
-            sched::yield();
-        }
-    }
-}
 
 
 // `extern "C"` disables name mangling
@@ -61,6 +48,9 @@ extern "C" void kernel_main(u64 multiboot_info_addr) {
 
     heap::init();
     serial::print("boot: cpu and memory ready\n");
+
+    // must run before sched::init()
+    fpu::init();
 
     // --- interrupt routing ---
     pic::disable();
@@ -131,22 +121,17 @@ extern "C" void kernel_main(u64 multiboot_info_addr) {
         vfs::init(ahci::read_sectors);
     }
 
+    vfs::mount_at("/proc", procfs::mount());
+
     serial::print("retux: ready\n");
 
     tty::print("\n=== retux kernel ready ===\n");
-    tty::print("type something! alt+F1..F4 to switch VTs.\n\n");
+    tty::print("alt+F1..F4 to switch VTs.\n\n");
 
-    sched::spawn("kbdecho", kbdecho_task, nullptr);
+    task::user::spawn_from_elf("/bin/retsh");
 
-    // proof-of-life for the SYSCALL path: a hand-written ring-3 blob that
-    // does write(1, "hello from ring 3!\n", ...) followed by exit(0).
-    task::user::spawn_from_elf("/hello");
-    task::user::spawn_from_elf("/printf_test");
-
-    // kernel_main's own context is the "boot" task from here on (see
-    // sched::init() above) - it has nothing left to do itself, so it just
-    // idles. it stays in the ready queue and will still get scheduled a
-    // slice at a time, same as everything else.
+    // kernel_main's context is the "boot" task now - nothing left to do, so
+    // it just idles, still scheduled a slice at a time like anything else.
     while (true) {
         asm volatile("hlt");
     }

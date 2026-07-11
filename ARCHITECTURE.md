@@ -95,7 +95,7 @@ normal serial boot output is intentionally high signal: it reports major milesto
 
 ## 6. storage & filesystem stack
 
-the storage stack is layered so that each piece only knows about the one below it: **AHCI** hands back raw sectors, **partition parsing** turns those into a partition's sector range, and **ext2** turns that range into files - all reachable through one **VFS** abstraction. an in‑memory **tarfs** driver plugs into the same VFS layer without needing a block device at all.
+the storage stack is layered so that each piece only knows about the one below it: **AHCI** hands back raw sectors, **partition parsing** turns those into a partition's sector range, and **ext2** turns that range into files - all reachable through one **VFS** abstraction. an in‑memory **tarfs** driver plugs into the same VFS layer without needing a block device at all, and a synthetic **procfs** plugs in with no backing store at all.
 
 ### AHCI driver (`ahci`)
 - scans PCI for an AHCI controller (class/subclass lookup via the `pci` bus enumerator), initialises the HBA and its first implemented port.
@@ -115,16 +115,22 @@ the storage stack is layered so that each piece only knows about the one below i
 - handles the POSIX `prefix` field for paths longer than the 100‑byte `name` field allows.
 - exists specifically so a minimal userspace (or just a set of early boot files) can be loaded and read **before** the AHCI/ext2 stack has to be trusted - see `main.cpp`'s boot order below.
 
+### procfs driver (`procfs`)
+- a synthetic filesystem with no backing store: three flat files (`/proc/uptime`, `/proc/meminfo`, `/proc/cpuinfo`) whose content is generated fresh at `open()` time from live kernel state (`hpet`/`pit` uptime, `pmm` frame counts, a fixed CPU stanza).
+- exists so real Linux programs that probe `/proc` (notably `fastfetch`) get plausible answers instead of `-ENOENT` for everything. no general procfs, no `/sys`.
+
 ### VFS layer (`vfs`)
-- a small, fixed vtable abstraction: `SuperBlockOps` (`root_inode`, `get_inode`) and `InodeOps` (`read`, `readdir`) - any driver that implements these two vtables (currently `ext2` and `tarfs`) is a fully usable root filesystem.
+- a small, fixed vtable abstraction: `SuperBlockOps` (`root_inode`, `get_inode`) and `InodeOps` (`read`, `readdir`) - any driver that implements these two vtables (currently `ext2`, `tarfs`, `procfs`) is a fully usable filesystem.
 - `directory` entries returned by `readdir` are a flat stream of `[u64 inode_no][NUL‑terminated name]` records, paged by byte offset - callers keep calling with an increasing offset until they get `0` bytes back.
-- `open(path)` walks a path one component at a time via `root_inode` + `get_inode`, building a `File` on success.
+- `open(path)` first runs `resolve_mount()` - a small fixed table (`mount_at(prefix, sb)`, e.g. `/proc`) checked before falling back to `root_sb` - then walks the path one component at a time via `root_inode` + `get_inode`, building a `File` on success. no unmounting, no nested prefixes.
 - `init(raw_read)` is the disk‑based bootstrap: scan partitions, try `ext2::mount` on each, and set `root_sb` on the first success.
 
 ### boot order (`main.cpp`)
 at boot, the kernel looks for a Multiboot2 module tag first:
 1. if one is found, it's mounted via `vfs::mount_initrd()` and becomes `root_sb` immediately - the AHCI driver and disk scan are **skipped entirely** for this boot.
 2. if no module is present (or it doesn't parse as USTAR), the kernel falls back to `ahci::init()` + `vfs::init(ahci::read_sectors)`, scanning the disk for an ext2 partition as before.
+
+either way, `procfs` is then mounted at `/proc` via `vfs::mount_at()`, and `/bin/retsh` is spawned as the first userspace process.
 
 this means a broken or not‑yet‑stable disk path can never block getting *something* mounted and readable - which is the whole point of having an `initrd`.
 
@@ -141,15 +147,16 @@ this means a broken or not‑yet‑stable disk path can never block getting *som
 
 ## 8. multitasking (`task`, `sched`)
 
-kernel-mode-only cooperative-looking-but-actually-preemptive round robin, in two layers:
+a preemptive round-robin scheduler that runs in kernel mode but drives both kernel-only tasks and ring-3 Linux processes, in two layers:
 
 ### `task`
-- `Task` is a plain control block: saved `rsp`, a `kmalloc`'d kernel stack, an entry point + argument, a `State` (`Ready` / `Running` / `Dead`), and an intrusive `next` pointer used to thread every live task onto one circular ready queue.
+- `Task` is a control block: saved `rsp`, a `kmalloc`'d kernel stack, an entry point + argument, a `State` (`Ready` / `Running` / `Dead`), an intrusive `next` pointer threading it onto one circular ready queue, plus per-Linux-task state (`cr3`, `fs_base`, `brk`/`mmap` regions, a `fds[]` table, a `parent`/`exit_code` pair, and a per-task FXSAVE area). kernel-only tasks leave the Linux fields zeroed.
 - `task::create()` allocates the control block and stack, then plants a fake `InitialFrame` on top of the stack shaped exactly like what `switch_to()` would have pushed for a task that's run before - so the very first switch into a new task "returns" straight into `task_trampoline` instead of a real call site.
 
 ### `switch.asm`
-- `switch_to(u64* old_rsp_out, u64 new_rsp)` saves the callee-saved register set (`rbx`, `rbp`, `r12`-`r15`) plus `rflags` onto the outgoing stack, stashes the resulting `rsp` through `old_rsp_out`, swaps `rsp` to `new_rsp`, restores the same set from there, and `ret`s - into whatever return address sits on top of the new stack.
-- deliberately doesn't touch caller-saved GPRs, segment registers, or FPU/SSE state - none of that varies between kernel tasks here (single address space, ring 0, `-mgeneral-regs-only` build).
+- `switch_to(old_rsp_out, new_rsp, old_fpu, new_fpu)` saves the callee-saved register set (`rbx`, `rbp`, `r12`-`r15`) plus `rflags` onto the outgoing stack, stashes the resulting `rsp` through `old_rsp_out`, swaps `rsp` to `new_rsp`, restores the same set from there, and `ret`s - into whatever return address sits on top of the new stack.
+- it also `fxsave`s/`fxrstor`s the x87/MMX/SSE register file to each task's own 512-byte FXSAVE area (`fpu` module) - the kernel itself never touches XMM (`-mgeneral-regs-only`), but ring-3 (musl) code uses SSE2 unconditionally and several ring-3 tasks are schedulable at once, so this state has to be swapped per task. a fresh task's area is seeded from `fpu::default_state()` (the real post-`fninit` image) rather than zeroed, so it never starts with every FP exception unmasked.
+- deliberately doesn't touch caller-saved GPRs or segment registers - none of that varies between kernel tasks here.
 
 ### `sched`
 - `sched::init()` wraps the calling context (`kernel_main`) as a "boot" task with no `task::create()`-manufactured stack of its own, spawns a dedicated `idle` task (`hlt` loop, always `Ready`, guarantees `schedule()` always has *something* to run), and splices them into a two-element ring.
@@ -162,33 +169,39 @@ kernel-mode-only cooperative-looking-but-actually-preemptive round robin, in two
 ## 9. userspace: syscalls, ELF loading, Linux-ABI compatibility
 
 ### system calls (`cpu/syscall`)
-- `SYSCALL`/`SYSRET`-based (not `int 0x80`) - `syscall::init()` programs `STAR`/`LSTAR`/`FMASK` and flips `EFER.SCE`. entry (`cpu/syscall_entry.asm`) `swapgs`es to the per-CPU `CpuLocal` (`cpu/cpu.hpp`) to find the current task's kernel stack, builds a `syscall::Frame` on it, and calls into `syscall_dispatch()`.
+- `SYSCALL`/`SYSRET`-based (not `int 0x80`) - `syscall::init()` programs `STAR`/`LSTAR`/`FMASK` and flips `EFER.SCE`. entry (`cpu/syscall_entry.asm`) `swapgs`es to the per-CPU `CpuLocal` (`cpu/cpu.hpp`) to find the current task's kernel stack, builds a `syscall::Frame` on it, and calls into `syscall_dispatch()`. on the way out it restores the arg registers (`rdi`/`rsi`/`rdx`/`r10`/`r8`/`r9`) from that frame before `SYSRET` - the Linux ABI preserves every register but `rax`/`rcx`/`r11`, and the C++ dispatcher is free to clobber the caller-saved ones, so this restore is mandatory (musl's `fstatat` keeps a live pointer in `r8` across the syscall).
 - calling convention and syscall numbers are the **real Linux x86-64 ABI** (`rax`=number, `rdi`/`rsi`/`rdx`/`r10`/`r8`/`r9`=args 0-5) - not a lookalike. an unimplemented number logs itself to serial and returns `-ENOSYS` rather than guessing, which is how bring-up against real binaries actually proceeds: run it, see what it blocked on, implement that.
-- implemented: `read`/`write`/`writev`/`open`/`openat`/`close`/`lseek`/`fstat`/`ioctl` (file I/O, backed by a per-`Task` `fds[]` table over the VFS), `brk`/`mmap`/`mprotect`/`munmap` (anonymous-only; `brk` and `mmap` each get a fixed, non-overlapping bump region per task), `arch_prctl` (TLS via `IA32_FS_BASE`, restored per-task on every `sched::schedule()` switch), `exit`/`exit_group`, `set_tid_address`/`set_robust_list`/`rt_sigaction`/`rt_sigprocmask` (no-op stubs - enough for musl's single-threaded startup path to proceed), `uname` (deliberately claims to **be** "Linux", not "retux" - same trick WSL1/Linuxulator play), `getpid`/`getuid`/etc. (dummy), `clock_gettime`, `getrandom`.
+- implemented: `read`/`write`/`writev`/`open`/`openat`/`close`/`lseek`/`fstat`/`stat`/`getdents64`/`access`/`readlink`/`getcwd`/`ioctl` (file I/O, backed by a per-`Task` `fds[]` table over the VFS; `stdout`/`stderr` go to the tty mirrored to serial), `brk`/`mmap`/`mprotect`/`munmap` (anonymous-only; `brk` and `mmap` each get a fixed, non-overlapping bump region per task), `fork`/`execve`/`wait4`/`exit`/`exit_group`/`getpid`/`getppid` (process lifecycle - see below), `arch_prctl` (TLS via `IA32_FS_BASE`, restored per-task on every `sched::schedule()` switch), `set_tid_address`/`set_robust_list`/`rt_sigaction`/`rt_sigprocmask` (no-op stubs - enough for musl's single-threaded startup path to proceed), `uname` (deliberately claims to **be** "Linux", not "retux" - same trick WSL1/Linuxulator play), `getuid`/etc. (dummy), `clock_gettime`, `getrandom`.
 
 ### ELF loader (`task/elf`)
 - loads a 64-bit LE `ET_EXEC` (non-PIE, statically linked) x86-64 binary's `PT_LOAD` segments into the shared address space with per-segment `PRESENT`/`USER`/`WRITABLE`/`NO_EXECUTE` permissions derived from `p_flags`. no relocation, no dynamic linker (`ET_DYN`/PIE unsupported) - matches what `-static -no-pie` compiler output looks like.
 - also reports `phdr_vaddr`/`phnum`/`phentsize` (for `AT_PHDR`/`AT_PHNUM`/`AT_PHENT`) and the highest mapped address (where `brk` starts) - everything `task/user.cpp` needs to build a real Linux-ABI process, not just jump to an entry point.
 
 ### Linux-ABI process bring-up (`task/user::spawn_from_elf`)
-- builds the exact stack layout Linux binaries expect at their initial `RSP` - `[argc][argv][NULL][envp][NULL][auxv pairs][AT_NULL]` followed by the string data those pointers reference - since musl's `_start` reads this straight off the stack rather than taking `argc`/`argv` in registers. gets this wrong and the binary segfaults or misreads before `main()` is ever reached.
-- SSE is enabled at boot (`boot.asm`, `CR4.OSFXSR`/`OSXMMEXCPT`) even though the kernel's own code never uses it (`-mgeneral-regs-only`) - SSE2 is mandatory x86-64 SysV ABI baseline, and real compiler output (musl's own `__set_thread_area` included) assumes it's on. `switch.asm` still doesn't save/restore XMM state - safe only because kernel code never touches it and only one ring-3 task is ever resident *per address space* (there's no reason two concurrently-resident Linux tasks would ever interleave XMM state through the same registers - each only ever sees its own).
+- builds the exact stack layout Linux binaries expect at their initial `RSP` - `[argc][argv][NULL][envp][NULL][auxv pairs][AT_NULL]` followed by the string data those pointers reference - since musl's `_start` reads this straight off the stack rather than taking `argc`/`argv` in registers. gets this wrong and the binary segfaults or misreads before `main()` is ever reached. the user stack is mapped eagerly (512 KiB, no demand-paged growth) - enough to run real programs like `fastfetch`.
+- SSE is enabled at boot (`boot.asm`, `CR4.OSFXSR`/`OSXMMEXCPT`) even though the kernel's own code never uses it (`-mgeneral-regs-only`) - SSE2 is mandatory x86-64 SysV ABI baseline, and real compiler output (musl's own `__set_thread_area` included) assumes it's on. XMM state is swapped per-task by `switch.asm`'s `fxsave`/`fxrstor` (see §8), so multiple ring-3 tasks can be concurrently resident without corrupting each other's FP state.
 - ELF loading + stack setup happen lazily, inside the spawned task's own entry function (`linux_task_entry`), not synchronously in the caller - every mapping needs to land in the new task's own private address space, which is only the active one once the scheduler has actually switched into it. a bad path/corrupt ELF is therefore no longer caught synchronously by `spawn_from_elf`'s caller; the task just logs to serial and exits immediately.
-- see `testbins/` for the Docker-based musl toolchain workflow used to build real test binaries against this.
+- see `test/` for the Docker-based musl toolchain workflow used to build real test binaries against this.
+
+### fork / exec / wait (`task/fork.cpp`, `task/user::sys_execve`, `sched::wait4`)
+- `fork()` clones the calling task: a fresh private address space with every privately-owned page deep-copied (`vmm::clone_address_space`), a shallow copy of the `fds[]` table, and identical `brk`/`mmap`/TLS state. the child resumes *as if returning from the same `syscall`* - `task/fork_entry.asm`'s `fork_enter_ring3` `IRETQ`s into ring 3 with the parent's saved register/stack state and `rax` forced to 0, rather than going through the normal syscall-return path. the parent gets the child's pid.
+- `execve()` replaces the calling task's image in place (same pid/`Task*`/kernel stack): it stages the entire new image (address space, ELF, stack, arg block) *before* tearing down the old one, so any failure cleanly switches back to the intact old address space and returns `-errno` instead of killing the caller.
+- a forked (parented) task is not auto-reaped on exit - it lingers `Dead` on the ring until its parent's `wait4()` collects its `exit_code` and frees it. `retsh` uses the classic fork-then-`wait4` pattern to run initrd binaries.
 
 ### per-task address spaces (`mem/vmm::create_address_space`)
 - every Linux task gets its own private `PML4` (`Task::cr3`, loaded by `sched.cpp`'s `schedule()` whenever it's non-zero - kernel-only tasks like `idle`/`kbdecho` leave `cr3` at 0 and just keep whatever's already loaded, since they only ever touch globally-shared mappings).
 - this requires a **physmap**: a fixed high-half window (`vmm::PHYSMAP_BASE`, `0xFFFF'C000'0000'0000`) mapping *all* physical RAM 1:1-offset, identically in every address space, built for free at boot (`boot.asm`'s `p3_table_physmap` reuses the same physical PDs as the low identity map, just reachable through a second PML4 slot). without it, `vmm.cpp`'s own page-table-walking code (which turns a physical frame address into a dereferenceable kernel pointer) would break the moment a freshly allocated page-table frame isn't mapped anywhere in whichever CR3 happens to be active - which is the normal case once more than one address space exists.
 - a fresh address space shares the kernel heap's and physmap's PML4 entries verbatim (global, static after boot), plus *most* of the low 4GiB (PML4 slot 0) - kernel image, and critically every device MMIO mapping (`local APIC`, I/O APIC, HPET, AHCI BARs - all mapped once at boot, at their own fixed physical/identity addresses) - **except** a reserved low window (`2MiB`-`16MiB`) held back for a non-PIE ELF's fixed `0x400000` load address. this low-range entanglement (kernel/device state and user code sharing the same 4GiB window) is what a higher-half kernel would avoid by construction; out of scope here, so the reserved-window carve-out is a pragmatic stand-in.
 - getting this right surfaced two previously-latent scheduler bugs (see `TODO.md` phase 4) that had simply never been exercised by any single-ring-3-task test: `sched.cpp`'s `reap_zombie()` freeing a dead task without unlinking it from the ready-queue ring first (dangling `next` pointer), and `TSS.RSP0` never being kept in sync per-task (only `cpu_local.kernel_rsp`, used by `SYSCALL`, was - a hardware IRQ landing mid-ring-3 uses `TSS.RSP0` instead). both fixed alongside this work. a third, related bug: `[[noreturn]] sys_exit` bypasses `syscall_entry`'s tail (the `swapgs` that restores `GS_BASE` before `SYSRET`) by jumping straight into `sched::exit_current()` - left unfixed, the *next* task's first ring-3 entry would inherit a stuck kernel `GS_BASE`, corrupting its first syscall. `sys_exit` now does the matching `swapgs` itself before abandoning the normal return path.
-- **known limitation**: no teardown on task exit - a dead task's private page tables and code/stack/`brk`/`mmap` physical frames are simply leaked, not freed. fine for a demo spawning a handful of tasks, a real problem for anything long-running.
+- **teardown**: `vmm::destroy_address_space()` frees a dead task's private page tables + code/stack/`brk`/`mmap` frames (called from `sched::exit_current()` and from `execve` before loading a new image), carefully touching only what `create_address_space()` handed out privately and never the shared kernel/device/heap/physmap mappings. physical frames backing individual `fds`/file buffers are still leaked - a smaller gap than before, but not nothing.
 
 ---
 
 ## 10. future directions
-- address-space teardown on task exit (free a dead task's private page tables + frames, not just its kernel stack)
-- `fork`/`exec` + a shell (`retsh`) that can run commands from the initrd/ext2 volume
 - dynamic linking / PIE (`ET_DYN`) support in the ELF loader
+- demand-paged stack growth + file-backed `mmap`, instead of the current eager 512 KiB stack and anonymous-only `mmap`
+- a cwd + relative-path resolution (`dirfd` is currently ignored), and a writable filesystem path
+- broader syscall coverage (`fcntl`, `sched_getaffinity`, sockets, … - real binaries still hit `-ENOSYS` on these)
 
 ---
 

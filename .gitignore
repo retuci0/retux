@@ -12,11 +12,15 @@ todo.txt
 .cache/
 *.zip
 
+# claude
+.claude/
+CLAUDE.md
+
 # compile commands
 compile_commands.json
 compile_commands.tmp
 
 # musl test binaries
-testbins/*
-!testbins/*.c
-!testbins/README.md
+test/*
+!test/*.c
+!test/README.md

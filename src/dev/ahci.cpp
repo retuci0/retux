@@ -245,11 +245,9 @@ namespace ahci {
 
         u8* dst = reinterpret_cast<u8*>(buffer);
 
-        // process up to 8 sectors (4KB) per DMA operation using a bounce
-        // buffer allocated from the PMM. since the kernel is identity-mapped
-        // at low addresses, phys == virt for PMM frames, so the HBA can DMA
-        // directly to them and we then copy to the caller's buffer (which
-        // may be heap-allocated at a non-identity-mapped virtual address).
+        // up to 8 sectors (4KB) per DMA via a PMM bounce buffer: PMM frames are
+        // identity-mapped (phys == virt) so the HBA can DMA to them, then we
+        // copy to the caller's (possibly non-identity-mapped) buffer.
         constexpr u32 MAX_SECTORS = 8;
 
         while (count > 0) {

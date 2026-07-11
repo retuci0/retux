@@ -3,9 +3,11 @@
 #include "cpu/cpu.hpp"
 
 #include "task/sched.hpp"
+#include "task/user.hpp"
 
 #include "io/hpet.hpp"
 #include "io/pit.hpp"
+#include "io/keyboard.hpp"
 
 #include "mem/pmm.hpp"
 #include "mem/vmm.hpp"
@@ -22,9 +24,8 @@
 #include "lib/string.hpp"
 
 
-// low-level entry point defined in `cpu/syscall_entry.asm`. userspace
-// executes `syscall`, the CPU jumps here, and eventually this stub sysrets
-// back with `rax` = the value returned by `syscall_dispatch()` below.
+// entry stub (cpu/syscall_entry.asm); sysrets back with rax = the value
+// returned by syscall_dispatch() below.
 extern "C" void syscall_entry();
 
 namespace {
@@ -36,62 +37,42 @@ namespace {
 
     constexpr u64 EFER_SCE = 1ULL << 0;  // System Call Extensions
 
-    // must match the GDT layout in boot.asm:
-    //   STAR[47:32] -> kernel CS (kernel SS derived by CPU as +8)
-    //   STAR[63:48] -> base for user CS/SS derived by SYSRET as +16 / +8
-    //                  so with 0x10 here, SYSRET picks user_data at 0x18
-    //                  and user_code at 0x20, both DPL=3.
+    // must match boot.asm's GDT. STAR[47:32] = kernel CS (SS = +8);
+    // STAR[63:48] = user seg base, SYSRET picks user CS at +16 / SS at +8
+    // (so 0x10 -> user_data 0x18, user_code 0x20, both DPL=3).
     constexpr u16 SYSCALL_KERNEL_CS_BASE = 0x08;
     constexpr u16 SYSRET_USER_SEG_BASE   = 0x10;
 
     // --- syscall implementations ---
 
-    // write(fd, buf, len). fd 1 -> tty, fd 2 -> serial. returns byte count
-    // on success, -1 on unknown fd. no validation of `buf` yet: this is
-    // called from ring 3 but the user pointer is trusted for now, since
-    // Landing A's only user program is a static kernel-embedded blob whose
-    // strings we ourselves mapped. once the ELF loader lands, this grows a
-    // real "does virt fall in the caller's user VMA?" check.
+    // write(fd, buf, len). `buf` is a trusted user pointer for now - no
+    // "does this fall in the caller's VMA?" check yet.
     i64 sys_write(u64 fd, const char* buf, u64 len) {
         if (fd != 1 && fd != 2) return -1;
+        // stdout+stderr both go to the tty (the on-screen console), mirrored
+        // to serial so the debug log still catches program output.
         for (u64 i = 0; i < len; ++i) {
-            if (fd == 1) tty::print(buf[i]);
-            else         serial::print(buf[i]);
+            tty::print(buf[i]);
+            serial::print(buf[i]);
         }
         return static_cast<i64>(len);
     }
 
     [[noreturn]] void sys_exit(u64 code) {
-        (void) code;  // not surfaced anywhere yet
+        sched::current_task()->exit_code = code;  // read by a parent's sys_wait4
 
-        // `syscall_entry`'s tail (cpu/syscall_entry.asm) does a matching
-        // `swapgs` right before `sysret`, to swap GS_BASE back from
-        // `&g_cpu_local` (which the ENTRY swapgs put there) to whatever the
-        // caller's GS_BASE was. `exit_current()` below never returns
-        // through that tail - it jumps straight into some other task via
-        // `switch_to()` - so without this, GS_BASE stays stuck at
-        // `&g_cpu_local` forever. the NEXT task to enter ring 3 for the
-        // first time (via a raw `iretq`, not `sysret` - see
-        // `task/user.cpp`'s `enter_ring3`) inherits that leftover kernel
-        // GS_BASE, and ITS first syscall's entry `swapgs` then toggles GS
-        // to a completely wrong state (swapping the stale kernel value
-        // into IA32_KernelGSBase instead of restoring it) - `[gs:...]`
-        // ends up resolving against address 0 instead of `g_cpu_local`,
-        // reading garbage. doing the matching swapgs here, manually,
-        // before abandoning the normal return path, keeps the pairing
-        // balanced regardless of which task runs next.
-        // 
-        // TL;DR: `exit_current()` skips the normal syscall return, leaving GS stuck to the kernel value. 
-        // that breaks the next task's first syscall (reads garbage from address 0). 
-        // fix: manually swapgs back before the jump to keep the pairing balanced.
+        // exit_current() jumps to another task via switch_to() and never
+        // returns through syscall_entry's tail - so its closing swapgs never
+        // runs, and GS_BASE would stay stuck at &g_cpu_local. do the matching
+        // swapgs here, or the next task to enter ring 3 inherits a bad GS_BASE
+        // and its first syscall reads garbage.
         asm volatile("swapgs" ::: "memory");
 
         sched::exit_current();  // marks Dead, switches away, never returns
     }
 
-    // writev(fd, iov, iovcnt) - musl's stdio flush path uses this instead
-    // of plain write() once buffering kicks in. same fd/trust rules as
-    // sys_write above, just looped over each chunk.
+    // writev(fd, iov, iovcnt) - musl's buffered stdio flushes through this,
+    // not plain write(). same fd/trust rules, looped over each chunk.
     struct iovec { void* iov_base; u64 iov_len; };
 
     i64 sys_writev(u64 fd, const iovec* iov, u64 iovcnt) {
@@ -104,23 +85,27 @@ namespace {
         return total;
     }
 
-    // page-granular USER mapping flags, shared by brk/mmap growth below.
-    // matches `task/user.cpp`'s USER_RW - duplicated rather than shared
-    // since that one's `static` to an anonymous namespace in another TU.
+    // user page flags for brk/mmap growth. dup of task/user.cpp's USER_RW
+    // (that one's file-local in another TU).
     constexpr u64 USER_RW = vmm::PRESENT | vmm::USER | vmm::WRITABLE | vmm::NO_EXECUTE;
 
     constexpr u64 PAGE_SIZE = 0x1000;
     inline u64 page_down(u64 x) { return x & ~(PAGE_SIZE - 1); }
     inline u64 page_up(u64 x)   { return (x + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1); }
 
-    // brk(addr) - Linux semantics: NOT a normal "-errno on failure" syscall.
-    // it always returns the resulting break value - unchanged from before
-    // if the request was invalid/OOM, the new one if it succeeded. glibc/
-    // musl's brk() wrapper compares the return against what it asked for
-    // to decide whether it "failed", the raw syscall never returns negative.
+    // must match vmm::create_address_space()'s reserved low window - the only
+    // per-task-private slice of PML4[0]. everything else in the low 4GiB is
+    // device MMIO / kernel image, shared via 2MB huge-page entries; growing
+    // brk past this would split one of those and corrupt every other address
+    // space's page tables.
+    constexpr u64 BRK_CEILING = 0x0000'0000'0100'0000ULL;  // 16 MiB
+
+    // brk(addr) - always returns the resulting break, never -errno (musl's
+    // wrapper compares the return against the request to detect failure).
     u64 sys_brk(u64 addr) {
         task::Task* self = sched::current_task();
         if (addr == 0 || addr < self->brk_start) return self->brk_cur;
+        if (addr > BRK_CEILING) return self->brk_cur;
 
         u64 old_top = page_up(self->brk_cur);
         u64 new_top = page_up(addr);
@@ -147,16 +132,10 @@ namespace {
     constexpr u64 PROT_EXEC      = 0x4;
     constexpr u64 MAP_ANONYMOUS  = 0x20;
 
-    // mmap(addr, len, prot, flags, fd, off) - anonymous-only for now (see
-    // the plan doc's Phase 4): a real Linux binary's malloc (musl's
-    // mallocng) leans on this for its arena, not just brk. bump-allocates
-    // from `Task::mmap_next` - `munmap` below frees the physical frames but
-    // doesn't reclaim the VA range, an intentional simplification (same
-    // spirit as `elf.cpp`'s "correctness first" - nothing here reuses
-    // address ranges, so no risk of a stale mapping aliasing a new one).
-    // returns a raw address on success or -errno on failure, exactly like
-    // any other syscall - musl/glibc's `mmap()` wrapper is the one that
-    // turns "return value in [-4095,-1]" into `MAP_FAILED` + `errno`.
+    // mmap(addr, len, prot, flags, fd, off) - anonymous-only (musl's malloc
+    // arena needs it, not just brk). bump-allocates from Task::mmap_next;
+    // munmap frees the frames but never reclaims the VA range - nothing reuses
+    // addresses, so no aliasing risk. returns an address or -errno.
     i64 sys_mmap(u64 addr, u64 len, u64 prot, u64 flags, u64 fd, u64 off) {
         (void)addr; (void)fd; (void)off;
         if (!(flags & MAP_ANONYMOUS)) return -err::ENODEV;  // no file-backed mmap yet
@@ -201,10 +180,9 @@ namespace {
     }
 
     // ---- file I/O ----
-    // fd 0/1/2 are special-cased (no real vfs::File backs them); fds 3.. are
-    // real vfs::File* in the current task's `fds[]` table. no cwd tracking
-    // yet, so `dirfd` is ignored entirely - every path is resolved from
-    // root regardless, same as `vfs::open()` already does.
+    // fd 0/1/2 special-cased (no vfs::File backs them); fds 3.. are real
+    // vfs::File* in the task's fds[] table. no cwd, so dirfd is ignored -
+    // every path resolves from root.
 
     constexpr u64 STAT_SIZE = 144;  // sizeof(struct stat), x86-64 Linux ABI
 
@@ -215,17 +193,15 @@ namespace {
         return -err::EMFILE;
     }
 
-    // valid, in-range, currently-open real fd - null (not a fault) for
-    // fd 0/1/2 or anything out of bounds/closed, so callers can tell those
-    // apart from a legitimately-open file with one check.
+    // real open fd, or null for fd 0/1/2 / out-of-range / closed - one check
+    // to tell those apart from a genuinely-open file.
     vfs::File* real_file(task::Task* self, u64 fd) {
         if (fd < 3 || fd >= task::Task::MAX_FDS) return nullptr;
         return self->fds[fd];
     }
 
     i64 sys_openat(u64 dirfd, const char* path, u64 flags, u64 mode) {
-        (void)dirfd; (void)flags; (void)mode;  // write flags/modes: no writable
-                                                // filesystem exists yet either
+        (void)dirfd; (void)flags; (void)mode;  // no cwd, no writable fs yet
         vfs::File* f = vfs::open(path);
         if (!f) return -err::ENOENT;
         task::Task* self = sched::current_task();
@@ -234,8 +210,68 @@ namespace {
         return fd;
     }
 
+    // --- stdin: real, blocking, canonical (line-buffered) mode ---
+    // single "line currently being typed" buffer - this kernel only ever
+    // has one interactive foreground task at a time in practice (retsh,
+    // Phase 8's testbins/retsh.c), so one instance is enough; the whole
+    // point of moving line editing here (rather than in retsh itself) is
+    // matching what a real tty driver's cooked mode does, AND retiring
+    // `kbdecho_task` (main.cpp) as a second, competing consumer of
+    // `keyboard::getchar()` - two readers racing the same buffer would
+    // split input unpredictably.
+    constexpr size_t STDIN_LINE_CAP = 256;
+    char stdin_line[STDIN_LINE_CAP];
+    size_t stdin_line_len   = 0;      // bytes currently buffered (a full line, once ready)
+    size_t stdin_line_pos   = 0;      // how much of it sys_read has already handed out
+    bool   stdin_line_ready = false;  // true once '\n' has been appended
+
+    // echoing '\b' via tty::print already erases the screen cell (see tty.cpp's
+    // '\b' case), so that's the whole backspace fix-up.
+    i64 sys_read_stdin(u8* buf, u64 len) {
+        while (!stdin_line_ready) {
+            char c = keyboard::getchar();
+            if (!c) {
+                // nothing typed - block. yield_blocking(), not plain yield();
+                // see its doc comment.
+                sched::yield_blocking();
+                continue;
+            }
+            if (c == '\b') {
+                if (stdin_line_len > 0) {
+                    --stdin_line_len;
+                    tty::print('\b');
+                }
+                continue;
+            }
+            if (stdin_line_len < STDIN_LINE_CAP - 1) {
+                stdin_line[stdin_line_len++] = c;
+                tty::print(c);
+            }
+            if (c == '\n') stdin_line_ready = true;
+        }
+
+        u64 avail = stdin_line_len - stdin_line_pos;
+        u64 n = (len < avail) ? len : avail;
+        string::memcpy(buf, stdin_line + stdin_line_pos, n);
+        stdin_line_pos += n;
+        if (stdin_line_pos >= stdin_line_len) {
+            // fully drained - reset for the next line.
+            stdin_line_len   = 0;
+            stdin_line_pos   = 0;
+            stdin_line_ready = false;
+        }
+        return static_cast<i64>(n);
+    }
+
     i64 sys_read(u64 fd, void* buf, u64 len) {
-        if (fd == 0) return 0;  // no stdin backing yet - reads as EOF
+        if (fd == 0) {
+            // save/restore user_rsp around the whole (possibly blocking) call,
+            // like sys_wait4 - see yield_blocking()'s doc comment.
+            u64 saved_user_rsp = cpu::local()->user_rsp;
+            i64 n = sys_read_stdin(reinterpret_cast<u8*>(buf), len);
+            cpu::local()->user_rsp = saved_user_rsp;
+            return n;
+        }
         if (fd == 1 || fd == 2) return -err::EBADF;
         vfs::File* f = real_file(sched::current_task(), fd);
         if (!f) return -err::EBADF;
@@ -243,6 +279,68 @@ namespace {
         if (n < 0) return -err::EIO;
         f->offset += static_cast<u64>(n);
         return n;
+    }
+
+    // getdents64(fd, dirp, count) - translates the VFS dirent format
+    // ([u64 inode][NUL name], byte-paged - see vfs.hpp) into Linux
+    // linux_dirent64 records (d_ino:8, d_off:8, d_reclen:2, d_type:1, name[]).
+    //
+    // re-collects the whole (tiny) directory on every call instead of paging:
+    // the variable-length records don't align 1:1 with the VFS's read chunks,
+    // so partial entries would need holding back without double-emitting.
+    // File::offset is repurposed as an entry index (dirs never use it as a
+    // byte offset) so repeated calls resume correctly.
+    i64 sys_getdents64(u64 fd, u8* dirp, u64 count) {
+        vfs::File* f = real_file(sched::current_task(), fd);
+        if (!f) return -err::EBADF;
+        if (!f->inode->is_dir) return -err::EINVAL;
+
+        struct Ent { u64 ino; char name[48]; };
+        constexpr u64 MAX_ENTRIES = 32;
+        Ent entries[MAX_ENTRIES];
+        u64 num_entries = 0;
+
+        u8 vfs_buf[512];
+        u64 vfs_off = 0;
+        while (num_entries < MAX_ENTRIES) {
+            ssize_t n = f->inode->ops->readdir(f->inode, vfs_off, vfs_buf, sizeof(vfs_buf));
+            if (n <= 0) break;
+            u8* p = vfs_buf;
+            u8* end = vfs_buf + n;
+            while (p < end && num_entries < MAX_ENTRIES) {
+                u64 ino = *reinterpret_cast<u64*>(p);
+                p += 8;
+                const char* name = reinterpret_cast<const char*>(p);
+                size_t name_len = string::strlen(name);
+                p += name_len + 1;
+
+                entries[num_entries].ino = ino;
+                string::strncpy(entries[num_entries].name, name, sizeof(entries[num_entries].name) - 1);
+                entries[num_entries].name[sizeof(entries[num_entries].name) - 1] = '\0';
+                ++num_entries;
+            }
+            vfs_off += static_cast<u64>(n);
+        }
+
+        u64 written = 0;
+        u64 idx = f->offset;
+        while (idx < num_entries) {
+            size_t name_len = string::strlen(entries[idx].name);
+            size_t reclen = (19 + name_len + 1 + 7) & ~7ULL;  // header(19) + name + NUL, 8-aligned
+            if (written + reclen > count) break;
+
+            u8* out = dirp + written;
+            *reinterpret_cast<u64*>(out + 0)  = entries[idx].ino;  // d_ino
+            *reinterpret_cast<u64*>(out + 8)  = 0;                 // d_off - unused by callers here
+            *reinterpret_cast<u16*>(out + 16) = static_cast<u16>(reclen);  // d_reclen
+            out[18] = 0;  // d_type = DT_UNKNOWN - nothing here distinguishes file/dir at this layer
+            string::memcpy(out + 19, entries[idx].name, name_len + 1);
+
+            written += reclen;
+            ++idx;
+        }
+        f->offset = idx;
+        return static_cast<i64>(written);
     }
 
     i64 sys_close(u64 fd) {
@@ -272,9 +370,8 @@ namespace {
         return result;
     }
 
-    // fills the Linux x86-64 `struct stat` layout (144 bytes) - see
-    // <bits/stat.h> - byte-offset writes rather than a matching struct
-    // definition since it's only used here and the padding is fiddly.
+    // fills the Linux x86-64 struct stat (144 bytes, <bits/stat.h>) by byte
+    // offset - the padding's fiddly and it's only used here.
     void fill_stat(u8* out, u64 size, bool is_dir) {
         string::memset(out, 0, STAT_SIZE);
         *reinterpret_cast<u64*>(out + 16) = 1;  // st_nlink
@@ -298,12 +395,58 @@ namespace {
         return 0;
     }
 
+    // stat(path, statbuf) - musl on x86-64 issues this for a plain
+    // stat()/lstat(), not newfstatat.
+    i64 sys_stat(const char* path, u8* statbuf) {
+        vfs::File* f = vfs::open(path);
+        if (!f) return -err::ENOENT;
+        fill_stat(statbuf, f->inode->size, f->inode->is_dir);
+        heap::kfree(f);
+        return 0;
+    }
+
+    // access(path, mode) - existence check only; no permission model to
+    // evaluate `mode` against (everything's world-readable - see fill_stat).
+    i64 sys_access(const char* path, u64 mode) {
+        (void)mode;
+        vfs::File* f = vfs::open(path);
+        if (!f) return -err::ENOENT;
+        heap::kfree(f);
+        return 0;
+    }
+
+    // dummy but stable, same spirit as getpid/getuid/etc below - 0 for a
+    // task with no parent (every `spawn_from_elf` task), the real parent
+    // pid for a `sys_fork()`'d one.
+    i64 sys_getppid() {
+        task::Task* parent = sched::current_task()->parent;
+        return parent ? static_cast<i64>(parent->id) : 0;
+    }
+
+    // readlink(path, buf, bufsize) - nothing here is ever a symlink, so this
+    // just reports existence: EINVAL (exists, not a link) or ENOENT.
+    i64 sys_readlink(const char* path, u8* buf, u64 bufsize) {
+        (void)buf; (void)bufsize;
+        vfs::File* f = vfs::open(path);
+        if (!f) return -err::ENOENT;
+        heap::kfree(f);
+        return -err::EINVAL;
+    }
+
+    // getcwd(buf, size) - no cwd tracking; every task's cwd is just "/".
+    i64 sys_getcwd(u8* buf, u64 size) {
+        constexpr char root[] = "/";
+        if (size < sizeof(root)) return -err::EINVAL;
+        string::memcpy(buf, root, sizeof(root));
+        return sizeof(root);
+    }
+
     constexpr u64 TCGETS = 0x5401;
 
     i64 sys_ioctl(u64 fd, u64 request, u64 argp) {
         if ((fd == 0 || fd == 1 || fd == 2) && request == TCGETS) {
-            // callers only check the return value (0 => "yes, a tty") -
-            // zeroing is enough, nothing reads specific termios fields yet.
+            // callers only check the return (0 => a tty); nothing reads the
+            // termios fields yet, so zeroing suffices.
             string::memset(reinterpret_cast<void*>(argp), 0, 60);  // sizeof(struct termios)
             return 0;
         }
@@ -324,9 +467,8 @@ namespace {
         for (; i < 65; ++i) dest[i] = 0;
     }
 
-    // uname() - deliberately claims to BE Linux (not "retux"): the goal is
-    // binary compatibility, and autoconf-generated / `uname`-branching code
-    // expects to see "Linux", the same trick WSL1 and BSD's Linuxulator play.
+    // uname() - claims to BE "Linux" (not "retux") for binary compat, the
+    // same trick WSL1 and BSD's Linuxulator play.
     i64 sys_uname(u8* buf) {
         utsname_field(buf + 0 * 65,   "Linux");
         utsname_field(buf + 1 * 65,   "retux");
@@ -337,12 +479,9 @@ namespace {
         return 0;
     }
 
-    // no wall clock - just uptime, from whichever timer main.cpp picked
-    // (hpet::init() succeeding vs falling back to pit::init(), see
-    // main.cpp). guards against querying the OTHER driver's uninitialized
-    // state (hpet::milliseconds() divides by a `configured_hz` that's only
-    // set once `hpet::init()` actually ran, and would divide-by-zero
-    // otherwise) by checking whether HPET has produced any ticks yet.
+    // no wall clock - just uptime from whichever timer main.cpp picked. the
+    // ticks() > 0 check avoids hpet::milliseconds() dividing by an unset
+    // configured_hz when PIT is the active timer.
     i64 sys_clock_gettime(u64 clk_id, u8* ts) {
         (void)clk_id;
         u64 ms = (hpet::ticks() > 0) ? hpet::milliseconds() : pit::ticks();
@@ -391,8 +530,7 @@ namespace {
 
 }
 
-// called from the SYSCALL entry stub with a pointer to the Frame it built
-// on the kernel stack. return value goes into `rax` on SYSRET.
+// called from the entry stub with the Frame it built; return goes into rax.
 extern "C" u64 syscall_dispatch(syscall::Frame* f) {
     using namespace syscall;
     switch (f->num) {
@@ -405,17 +543,30 @@ extern "C" u64 syscall_dispatch(syscall::Frame* f) {
             return static_cast<u64>(sys_read(f->arg0, reinterpret_cast<void*>(f->arg1), f->arg2));
         case SYS_CLOSE:
             return static_cast<u64>(sys_close(f->arg0));
+        case SYS_GETDENTS64:
+            return static_cast<u64>(sys_getdents64(f->arg0, reinterpret_cast<u8*>(f->arg1), f->arg2));
         case SYS_FSTAT:
             return static_cast<u64>(sys_fstat(f->arg0, reinterpret_cast<u8*>(f->arg1)));
+        case SYS_STAT:
+            return static_cast<u64>(sys_stat(reinterpret_cast<const char*>(f->arg0), reinterpret_cast<u8*>(f->arg1)));
+        case SYS_ACCESS:
+            return static_cast<u64>(sys_access(reinterpret_cast<const char*>(f->arg0), f->arg1));
+        case SYS_GETPPID:
+            return static_cast<u64>(sys_getppid());
+        case SYS_READLINK:
+            return static_cast<u64>(sys_readlink(
+                reinterpret_cast<const char*>(f->arg0),
+                reinterpret_cast<u8*>(f->arg1),
+                f->arg2));
+        case SYS_GETCWD:
+            return static_cast<u64>(sys_getcwd(reinterpret_cast<u8*>(f->arg0), f->arg1));
         case SYS_LSEEK:
             return static_cast<u64>(sys_lseek(f->arg0, static_cast<i64>(f->arg1), f->arg2));
         case SYS_IOCTL:
             return static_cast<u64>(sys_ioctl(f->arg0, f->arg1, f->arg2));
         case SYS_OPENAT:
             return static_cast<u64>(sys_openat(f->arg0, reinterpret_cast<const char*>(f->arg1), f->arg2, f->arg3));
-        case SYS_OPEN:
-            // legacy open(path, flags, mode) == openat(AT_FDCWD, ...) -
-            // dirfd is ignored by sys_openat anyway (no cwd tracking).
+        case SYS_OPEN:  // open(path,...) == openat(ignored dirfd, path, ...)
             return static_cast<u64>(sys_openat(0, reinterpret_cast<const char*>(f->arg0), f->arg1, f->arg2));
         case SYS_BRK:
             return sys_brk(f->arg0);
@@ -430,6 +581,17 @@ extern "C" u64 syscall_dispatch(syscall::Frame* f) {
                 f->arg0,
                 reinterpret_cast<const iovec*>(f->arg1),
                 f->arg2));
+        case SYS_FORK:
+            return static_cast<u64>(task::user::sys_fork(f));
+        case SYS_EXECVE:
+            return static_cast<u64>(task::user::sys_execve(
+                reinterpret_cast<const char*>(f->arg0),
+                reinterpret_cast<char* const*>(f->arg1),
+                reinterpret_cast<char* const*>(f->arg2)));
+        case SYS_WAIT4:
+            return static_cast<u64>(sched::wait4(
+                static_cast<i64>(f->arg0),
+                reinterpret_cast<u32*>(f->arg1)));
         case SYS_GETPID:
             return static_cast<u64>(sys_getpid());
         case SYS_UNAME:
@@ -446,25 +608,18 @@ extern "C" u64 syscall_dispatch(syscall::Frame* f) {
         case SYS_ARCH_PRCTL:
             return static_cast<u64>(sys_arch_prctl(f->arg0, f->arg1));
         case SYS_SET_TID_ADDRESS:
-            // real thread-id tracking is meaningless single-threaded -
-            // return a fake but stable tid so libc has *something*.
-            return 1;
+            return 1;  // fake but stable tid - tid tracking is moot single-threaded
         case SYS_SET_ROBUST_LIST:
         case SYS_RT_SIGACTION:
         case SYS_RT_SIGPROCMASK:
-            // best-effort no-ops: musl's single-threaded startup path treats
-            // these as optional and doesn't check hard on failure, but
-            // returning success (rather than -ENOSYS) skips it asking twice.
-            return 0;
+            return 0;  // no-ops - enough for musl's single-threaded startup
         case SYS_EXIT:
         case SYS_EXIT_GROUP:
             sys_exit(f->arg0);
             // unreachable - sys_exit is [[noreturn]]
         default:
-            // bring-up aid: a real Linux binary hitting an unimplemented
-            // syscall should tell us its number instead of just misbehaving
-            // silently or getting a generic -1 - that log line is what
-            // drives which syscall gets implemented next.
+            // log the number rather than silently misbehaving - drives which
+            // syscall gets implemented next.
             serial::print("syscall: unimplemented number ");
             serial::print_dec(f->num);
             serial::print("\n");
@@ -483,18 +638,15 @@ namespace syscall {
         // LSTAR: the address SYSCALL jumps to in 64-bit mode.
         cpu::wrmsr(IA32_LSTAR, reinterpret_cast<u64>(&syscall_entry));
 
-        // FMASK: bits set here get CLEARED in RFLAGS on SYSCALL entry.
-        // clearing IF disables interrupts across the CS/RSP swap window
-        // in the entry stub - otherwise an IRQ arriving between "swapgs"
-        // and "switch to kernel stack" would run with user RSP and blow
-        // straight through some untrusted address. clearing DF keeps
-        // System V ABI happy (kernel string ops assume DF=0).
+        // FMASK: these bits get cleared in RFLAGS on entry. clearing IF keeps
+        // interrupts off across the entry stub's swapgs->kernel-stack window
+        // (an IRQ there would run on the user RSP); clearing DF is the SysV
+        // ABI requirement for kernel string ops.
         constexpr u64 RFLAGS_IF = 1ULL << 9;
         constexpr u64 RFLAGS_DF = 1ULL << 10;
         cpu::wrmsr(IA32_FMASK, RFLAGS_IF | RFLAGS_DF);
 
-        // finally, actually turn SYSCALL/SYSRET on. up till now they'd
-        // #UD - EFER.SCE is off by default even in long mode.
+        // EFER.SCE - off by default even in long mode; SYSCALL #UDs without it.
         u64 efer = cpu::rdmsr(IA32_EFER);
         cpu::wrmsr(IA32_EFER, efer | EFER_SCE);
 
